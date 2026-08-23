@@ -1,0 +1,4 @@
+# Doorslip signs raw bytes. Git must never rewrite line endings on checkout:
+# the day a test fixture holds known-good envelope bytes, CRLF conversion
+# would break its signature silently and on one platform only.
+* text=auto eol=lf
