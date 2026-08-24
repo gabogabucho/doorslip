@@ -1,0 +1,42 @@
+[Unit]
+Description=Doorslip mailbox server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=doorslip
+Group=doorslip
+WorkingDirectory=/var/lib/doorslip
+
+# Binds loopback only. Caddy is the sole way in, so there is no public port
+# to remember to firewall and no chance of serving plaintext by accident.
+ExecStart=/opt/doorslip/venv/bin/doorslip serve \
+    --db /var/lib/doorslip/doorslip.db \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --welcome-handle welcome@DOORSLIP_HOST
+
+Restart=always
+RestartSec=3
+
+# The server holds every message anyone ever sent through it, so it gets no
+# more of the machine than it needs.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/doorslip
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

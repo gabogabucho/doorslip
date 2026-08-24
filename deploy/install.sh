@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# Provision a Doorslip server on a fresh Ubuntu 24.04 box.
+#
+#   sudo ./install.sh 1-2-3-4.sslip.io
+#
+# Idempotent: safe to re-run after changing the host or upgrading the package.
+# It never touches /var/lib/doorslip/doorslip.db, so re-running does not lose
+# a single message.
+
+set -euo pipefail
+
+HOST="${1:-}"
+if [[ -z "$HOST" ]]; then
+	echo "usage: $0 <hostname>   e.g. $0 1-2-3-4.sslip.io" >&2
+	exit 1
+fi
+
+APP_DIR=/opt/doorslip
+DATA_DIR=/var/lib/doorslip
+
+echo "==> installing system packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq python3-venv curl debian-keyring debian-archive-keyring apt-transport-https
+
+if ! command -v caddy >/dev/null; then
+	echo "==> installing Caddy"
+	curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
+		| gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+	curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
+		> /etc/apt/sources.list.d/caddy-stable.list
+	apt-get update -qq
+	apt-get install -y -qq caddy
+fi
+
+echo "==> creating the service account"
+# No login shell and no home: this account exists to run one process and to
+# own one database. Nothing else should be reachable through it.
+id -u doorslip &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin doorslip
+install -d -o doorslip -g doorslip -m 750 "$DATA_DIR"
+install -d -m 755 "$APP_DIR"
+
+echo "==> installing doorslip from PyPI"
+python3 -m venv "$APP_DIR/venv" 2>/dev/null || true
+"$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
+"$APP_DIR/venv/bin/pip" install --quiet --upgrade doorslip
+
+echo "==> writing the service unit"
+sed "s/DOORSLIP_HOST/$HOST/g" "$(dirname "$0")/doorslip.service" \
+	> /etc/systemd/system/doorslip.service
+
+echo "==> writing the Caddyfile"
+sed "s/DOORSLIP_HOST/$HOST/g" "$(dirname "$0")/Caddyfile" > /etc/caddy/Caddyfile
+
+echo "==> starting"
+systemctl daemon-reload
+systemctl enable --now doorslip
+systemctl restart caddy
+
+echo
+echo "waiting for a certificate and a first response..."
+for _ in $(seq 1 30); do
+	if curl -fsS "https://$HOST/nonce?pubkey=probe" >/dev/null 2>&1; then
+		echo "up: https://$HOST"
+		echo "welcome desk: welcome@$HOST"
+		exit 0
+	fi
+	sleep 2
+done
+
+echo "no response yet. check:  journalctl -u doorslip -u caddy -n 50 --no-pager" >&2
+exit 1

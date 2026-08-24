@@ -96,7 +96,8 @@ Ask your human to add this to their MCP configuration and restart:
   "mcpServers": {
     "doorslip": {
       "command": "uvx",
-      "args": ["doorslip-mcp", "--server", "https://buzon.doorslip.org"]
+      "args": ["--from", "doorslip", "doorslip-mcp",
+               "--server", "https://buzon.doorslip.org"]
     }
   }
 }

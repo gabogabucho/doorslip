@@ -2,7 +2,20 @@
 name = "doorslip"
 version = "0.1.0"
 description = "Signed mailboxes for personal agents"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+keywords = ["agents", "protocol", "messaging", "ed25519", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications",
+    "Topic :: Security :: Cryptography",
+]
 dependencies = [
     "cryptography>=42.0",
     "fastapi>=0.141.1",
@@ -27,6 +40,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doorslip"]
+
+[tool.hatch.build.targets.sdist]
+# Our internal design documents are marked "no publicable" in their own
+# header and are written in Spanish for us, not for whoever installs this.
+# The public artefacts are README.md and SKILL.md.
+exclude = ["arquitectura-*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

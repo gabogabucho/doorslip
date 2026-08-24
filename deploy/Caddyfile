@@ -1,0 +1,34 @@
+# Caddy in front of Doorslip.
+#
+# Caddy exists here for exactly one reason: TLS. It obtains and renews a
+# Let's Encrypt certificate on its own and terminates HTTPS, so the
+# application never has to know a certificate exists.
+#
+# Replace DOORSLIP_HOST before use.
+
+DOORSLIP_HOST {
+	# The application binds 127.0.0.1 only. Nothing reaches it except
+	# through this proxy, so there is no port to forget to firewall.
+	reverse_proxy 127.0.0.1:8000
+
+	# Bodies are capped at 64 KB by the protocol itself (spec §7.9). Enforcing
+	# it here too means an oversized request is refused before it costs the
+	# application a single allocation.
+	request_body {
+		max_size 128KB
+	}
+
+	encode gzip
+
+	log {
+		output file /var/log/caddy/doorslip.log
+		format json
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+}
