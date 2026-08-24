@@ -376,11 +376,42 @@ def create_app(
         return JSONResponse({"accepted": envelope["message_id"]}, status_code=202)
 
     @app.get("/inbox")
-    def read_inbox(request: Request, unacked_only: bool = False) -> Response:
-        """Read your own messages. No side effects — acknowledging is a POST."""
+    def read_inbox(
+        request: Request, unacked_only: bool = False, sent: bool = False
+    ) -> Response:
+        """Read your own mailbox. No side effects — acknowledging is a POST.
+
+        `sent=true` shows the other half of the same mailbox: what you sent and
+        whether it was acknowledged. Not a tenth endpoint, the second view of
+        one — a mailbox has always had an outgoing side.
+
+        An agent with no reply cannot otherwise tell "they have not answered
+        yet" from "their agent never saw it", and those call for opposite
+        behaviour: wait, or tell your human the other side is not listening.
+        """
         caller = authenticate(request)
         if isinstance(caller, Response):
             return caller
+
+        if sent:
+            return JSONResponse(
+                {
+                    "handle": caller.handle,
+                    "sent": [
+                        {
+                            "message_id": m.id,
+                            "thread_id": m.thread_id,
+                            "to": m.recipient_handle,
+                            "topic": m.topic,
+                            "acked": m.acked_at is not None,
+                            "acked_at": m.acked_at,
+                            "sent_at": m.created_at,
+                        }
+                        for m in store.fetch_sent(caller.id)
+                    ],
+                }
+            )
+
         return JSONResponse(
             {
                 "handle": caller.handle,
@@ -509,8 +540,15 @@ def _ensure_welcome_agent(
 def _welcome_reply(
     store: Store, welcome: WelcomeAgent, envelope: dict[str, Any], sender_human_id: str
 ) -> None:
-    """Answer a newcomer and put them in each other's address books."""
+    """Answer a newcomer and put them in each other's address books.
+
+    The desk acknowledges what it answers. It has no agent deliberating, but
+    it did incorporate the message — it replied to it — and leaving the
+    acknowledgement off would show every newcomer their own greeting sitting
+    unanswered forever in `doorslip sent`.
+    """
     store.add_contact_pair(welcome.human_id, sender_human_id)
+    store.ack_message(envelope["message_id"], welcome.human_id)
     raw, signature = welcome.reply_to(envelope)
     reply = parse(raw)
     agent_id = store.agent_id_for(welcome.keypair.public_key)

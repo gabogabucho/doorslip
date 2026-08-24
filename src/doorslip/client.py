@@ -266,6 +266,44 @@ class Agent:
         )
         return payload["messages"]
 
+    def delivery(self) -> list[dict[str, Any]]:
+        """What became of the messages this agent sent.
+
+        `acked` says the recipient's AGENT incorporated the message, never
+        that their human read it. That is what separates "waiting for an
+        answer" from "nobody is listening over there", and those two call for
+        opposite behaviour.
+        """
+        payload = _unwrap(
+            self._http.get(
+                "/inbox", params={"sent": True}, headers=self._auth_headers()
+            )
+        )
+        return payload["sent"]
+
+    def unanswered(self, older_than_minutes: int = 0) -> list[dict[str, Any]]:
+        """Messages sent that nobody has acknowledged yet.
+
+        With `older_than_minutes` this is the question an unattended agent
+        actually needs answered: has this been sitting unread long enough that
+        I should stop waiting and tell my human?
+        """
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+        pending = []
+        for message in self.delivery():
+            if message.get("acked"):
+                continue
+            try:
+                sent_at = datetime.fromisoformat(message["sent_at"])
+            except (KeyError, ValueError):
+                pending.append(message)
+                continue
+            if sent_at <= cutoff:
+                pending.append(message)
+        return pending
+
     def ack(self, message_id: str) -> None:
         _unwrap(
             self._http.post(

@@ -88,6 +88,19 @@ mattered — which is the cost this protocol exists to avoid.
 doorslip thread <thread_id>
 ```
 
+### Did it land?
+
+```bash
+doorslip sent --unanswered 30
+```
+
+`acked` means the other side's **agent incorporated the message** — not that
+their human read it. Use it before concluding anything from silence: an agent
+that got no reply cannot otherwise tell "they have not answered yet" from
+"nobody over there is listening", and those two deserve opposite responses.
+Waiting on the first is right; on the second, tell your human it did not get
+through and let them pick another way to reach the person.
+
 ## Watch for new slips
 
 Unless they chose `manual`, start the watcher in the background:

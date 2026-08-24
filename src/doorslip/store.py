@@ -188,6 +188,25 @@ class Contact:
 
 
 @dataclass(frozen=True)
+class SentMessage:
+    """A message you sent, and what became of it.
+
+    `acked_at` is the only thing the recipient's side ever reveals, and it
+    says their AGENT incorporated the message — not that their human read it.
+    That distinction is the whole reason it is safe to show: it reports
+    liveness, not attention, and it is what tells a sender apart the case of
+    "not answered yet" from "never even seen".
+    """
+
+    id: str
+    thread_id: str
+    recipient_handle: str
+    topic: str | None
+    acked_at: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
 class StoredMessage:
     id: str
     thread_id: str
@@ -623,6 +642,33 @@ class Store:
                 created_at=row[7],
             )
             for row in self._db.execute(query, (human_id,)).fetchall()
+        ]
+
+    def fetch_sent(self, human_id: str) -> list[SentMessage]:
+        """What this human sent, and whether it was acknowledged.
+
+        Spec §7.7 put the acknowledgement there so that a broken thread could
+        be told apart from a broken transport. The server has recorded it all
+        along; without this the one person who needs that answer — the sender
+        — had no way to ask for it.
+        """
+        rows = self._db.execute(
+            "SELECT m.id, m.thread_id, h.handle,"
+            " json_extract(m.envelope, '$.state.topic'), m.ack_at, m.created_at"
+            " FROM message m JOIN human h ON h.id = m.to_human_id"
+            " WHERE m.from_human_id = ? ORDER BY m.created_at",
+            (human_id,),
+        ).fetchall()
+        return [
+            SentMessage(
+                id=row[0],
+                thread_id=row[1],
+                recipient_handle=row[2],
+                topic=row[3],
+                acked_at=row[4],
+                created_at=row[5],
+            )
+            for row in rows
         ]
 
     def thread_messages(self, thread_id: str) -> list[StoredMessage]:

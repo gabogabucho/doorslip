@@ -261,6 +261,21 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sent(args: argparse.Namespace) -> int:
+    """Show what you sent and whether it was acknowledged.
+
+    `acked` means the recipient's agent incorporated the message, not that
+    their human read it — it reports whether anybody is listening on the other
+    side, which is a different question from whether they agreed.
+    """
+    agent = _load_agent(_resolve_home(args))
+    if args.unanswered is not None:
+        _emit({"unanswered": agent.unanswered(older_than_minutes=args.unanswered)})
+    else:
+        _emit({"sent": agent.delivery()})
+    return 0
+
+
 def cmd_ack(args: argparse.Namespace) -> int:
     agent = _load_agent(_resolve_home(args))
     try:
@@ -472,6 +487,17 @@ def build_parser() -> argparse.ArgumentParser:
     inbox = subcommands.add_parser("inbox", help="read your messages")
     inbox.add_argument("--unacked", action="store_true")
     inbox.set_defaults(func=cmd_inbox)
+
+    sent = subcommands.add_parser("sent", help="what you sent, and whether it landed")
+    sent.add_argument(
+        "--unanswered",
+        type=int,
+        nargs="?",
+        const=0,
+        help="only what is still unacknowledged; with a number, only older than "
+        "that many minutes",
+    )
+    sent.set_defaults(func=cmd_sent)
 
     ack = subcommands.add_parser("ack", help="confirm a message was incorporated")
     ack.add_argument("message_id")
