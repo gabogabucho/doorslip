@@ -56,7 +56,7 @@ def test_the_protocol_version_matches_what_envelopes_carry(http):
 
 
 def test_a_client_learns_the_server_details_on_its_first_call(http):
-    agent = Agent(http, handle="gabo@x", label="hermes", keypair=generate_keypair())
+    agent = Agent(http, handle="gabo@doorslip.test", label="hermes", keypair=generate_keypair())
 
     agent._nonce()
 
@@ -64,14 +64,14 @@ def test_a_client_learns_the_server_details_on_its_first_call(http):
 
 
 def test_no_advice_when_the_client_is_current(http):
-    agent = Agent(http, handle="gabo@x", label="hermes", keypair=generate_keypair())
+    agent = Agent(http, handle="gabo@doorslip.test", label="hermes", keypair=generate_keypair())
     agent._nonce()
 
     assert agent.update_notice() is None
 
 
 def test_a_newer_server_release_produces_advice(http):
-    agent = Agent(http, handle="gabo@x", label="hermes", keypair=generate_keypair())
+    agent = Agent(http, handle="gabo@doorslip.test", label="hermes", keypair=generate_keypair())
     agent._nonce()
     agent.server_info = dict(agent.server_info, client="999.0.0")
 
@@ -86,7 +86,7 @@ def test_an_older_server_release_produces_none(http):
     """A client ahead of the server is not a problem to report. It happens
     while a server is being upgraded and resolves itself.
     """
-    agent = Agent(http, handle="gabo@x", label="hermes", keypair=generate_keypair())
+    agent = Agent(http, handle="gabo@doorslip.test", label="hermes", keypair=generate_keypair())
     agent._nonce()
     agent.server_info = dict(agent.server_info, client="0.0.1")
 
@@ -98,7 +98,7 @@ def test_an_unusable_version_gives_no_advice(http, offered):
     """Wrong advice is worse than none: telling somebody to upgrade to a
     version that does not exist sends them looking for a problem elsewhere.
     """
-    agent = Agent(http, handle="gabo@x", label="hermes", keypair=generate_keypair())
+    agent = Agent(http, handle="gabo@doorslip.test", label="hermes", keypair=generate_keypair())
     agent._nonce()
     agent.server_info = dict(agent.server_info, client=offered)
 
@@ -109,7 +109,7 @@ def test_advice_never_blocks_the_command(http):
     """Refusing to work over a version number would strand somebody in the
     middle of a conversation for what is usually cosmetic.
     """
-    agent = Agent(http, handle="gabo@x", label="hermes", keypair=generate_keypair())
+    agent = Agent(http, handle="gabo@doorslip.test", label="hermes", keypair=generate_keypair())
     agent.register()
     agent.server_info = dict(agent.server_info, client="999.0.0")
 

@@ -78,6 +78,12 @@ doorslip send --to someone@server --thread <thread_id> --parent <message_id> \
 makes both sides reconstruct the same thread. `--state` on a reply is a merge
 patch — send only what changed.
 
+**Always put a `topic` on the message that opens a thread.** It is the subject
+line: it is what the other person's agent can tell them before they open
+anything, and what a notification has to work with. A slip without one arrives
+as "something from gabo@…" and forces them to read it to find out whether it
+mattered — which is the cost this protocol exists to avoid.
+
 ```bash
 doorslip thread <thread_id>
 ```

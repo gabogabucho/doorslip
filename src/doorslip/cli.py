@@ -146,6 +146,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
     try:
         registered = agent.register(enroll_code=args.enroll)
         result["registered"] = True
+        # The server decides the final form of a handle, so store what it
+        # registered rather than what was asked for.
+        result["handle"] = registered.get("handle", args.handle)
         result["welcome_handle"] = registered.get("welcome_handle")
         if registered.get("enrolled"):
             result["handle"] = registered["handle"]

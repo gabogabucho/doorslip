@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,38 @@ from doorslip.store import (
     TooManyAgents,
 )
 from doorslip.welcome import WELCOME_LABEL, WelcomeAgent
+
+# A handle is `local@domain`, and the domain is the server it lives on. That
+# is not decoration: it is how a message finds its way once there is more than
+# one server (spec §11 bis), and a handle without one has nowhere to route to.
+# Somebody registered as plain `raor00` before this existed.
+_LOCAL_PART = re.compile(r"^[a-z0-9]([a-z0-9._-]{0,30}[a-z0-9])?$")
+
+
+def normalise_handle(handle: str, server_domain: str) -> str:
+    """Lowercase and check a requested handle, or explain what is wrong.
+
+    Case is folded rather than rejected: two handles differing only in
+    capitalisation would be two identities nobody can tell apart out loud, and
+    a person reading one back over the phone cannot hear the difference.
+
+    The server decides the final form and returns it, so the client stores
+    what was actually registered instead of what it asked for.
+    """
+    candidate = handle.strip().lower()
+    if candidate.count("@") != 1:
+        raise ValueError(f"a handle looks like name@{server_domain}")
+
+    local, domain = candidate.split("@")
+    if domain != server_domain.lower():
+        raise ValueError(f"handles on this server end in @{server_domain}")
+    if not _LOCAL_PART.match(local):
+        raise ValueError(
+            "the part before @ may use letters, digits, dot, dash and underscore, "
+            "must start and end with a letter or digit, and stops at 32 characters"
+        )
+    return candidate
+
 
 SIGNATURE_HEADER = "X-Doorslip-Signature"
 DEFAULT_WELCOME_HANDLE = "welcome@doorslip.test"
@@ -166,6 +199,11 @@ def create_app(
             )
 
         assert handle is not None
+        try:
+            handle = normalise_handle(handle, welcome_handle.split("@", 1)[-1])
+        except ValueError as exc:
+            return _error(400, str(exc))
+
         try:
             human = store.register_identity(handle=handle, pubkey=pubkey, label=label)
         except HandleTaken:
