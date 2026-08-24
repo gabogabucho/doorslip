@@ -43,6 +43,10 @@ TERMINAL_STATUS = {"confirmed", "declined", "cancelled", "done"}
 # its way past it.
 DEFAULT_MAX_TURNS = 8
 
+# A thread about Saturday still running on Sunday is not coordinating anything
+# any more. Hand it back to the human rather than keep paying for it.
+DEFAULT_MAX_AGE_HOURS = 48.0
+
 
 def interval_seconds(setting: str) -> int | None:
     """Translate a stored preference. `manual` means do not run at all."""
@@ -63,7 +67,15 @@ def summarise(message: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def should_wake(summary: dict[str, Any], seen: Counter, max_turns: int) -> tuple[bool, str]:
+def should_wake(
+    summary: dict[str, Any],
+    seen: Counter,
+    max_turns: int,
+    *,
+    we_also_settled: bool = False,
+    thread_age_hours: float | None = None,
+    max_age_hours: float | None = None,
+) -> tuple[bool, str]:
     """Whether to run the hook for this slip, and why not when the answer is no.
 
     Refusing still leaves the slip announced. Stopping the automation is not
@@ -72,13 +84,58 @@ def should_wake(summary: dict[str, Any], seen: Counter, max_turns: int) -> tuple
     """
     status = (summary.get("status") or "").lower()
     if status in TERMINAL_STATUS:
-        return False, f"thread reached {status}"
+        # One side declaring the matter closed is a proposal, not a
+        # conclusion. Stopping on it would let either agent end a negotiation
+        # unilaterally, and the other's human would never learn their side was
+        # never actually agreed to.
+        if we_also_settled:
+            return False, f"both sides reached {status}"
+        return True, ""
 
     thread = summary.get("thread_id")
     if thread and seen[thread] >= max_turns:
         return False, f"thread hit the {max_turns}-turn ceiling"
 
+    if max_age_hours is not None and thread_age_hours is not None:
+        if thread_age_hours > max_age_hours:
+            # A thread about Saturday still running on Sunday is not
+            # coordinating anything any more.
+            return False, f"thread is older than {max_age_hours}h"
+
     return True, ""
+
+
+def settled_by_us(sent: list[dict[str, Any]], thread_id: str | None) -> bool:
+    """Whether this agent already declared the thread closed."""
+    if not thread_id:
+        return False
+    return any(
+        envelope.get("thread_id") == thread_id
+        and str((envelope.get("state") or {}).get("status", "")).lower() in TERMINAL_STATUS
+        for envelope in sent
+    )
+
+
+def thread_age_hours(envelopes: list[dict[str, Any]], thread_id: str | None) -> float | None:
+    """Hours since the oldest message this agent has seen in the thread."""
+    from datetime import datetime, timezone
+
+    if not thread_id:
+        return None
+    stamps = []
+    for envelope in envelopes:
+        if envelope.get("thread_id") != thread_id:
+            continue
+        try:
+            stamps.append(datetime.fromisoformat(envelope["timestamp"]))
+        except (KeyError, ValueError):
+            continue
+    if not stamps:
+        return None
+    oldest = min(stamps)
+    if oldest.tzinfo is None:
+        oldest = oldest.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - oldest).total_seconds() / 3600
 
 
 def run_hook(command: str, summary: dict[str, Any]) -> dict[str, Any]:
@@ -154,6 +211,7 @@ def watch(
     use_notifications: bool = True,
     on_slip: str | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
+    max_age_hours: float | None = DEFAULT_MAX_AGE_HOURS,
 ) -> None:
     """Poll until interrupted, printing one JSON line per newly seen slip.
 
@@ -197,7 +255,18 @@ def watch(
             if not on_slip:
                 continue
 
-            allowed, reason = should_wake(summary, per_thread, max_turns)
+            outgoing = agent.sent()
+            incoming = [m.get("envelope", {}) for m in pending]
+            allowed, reason = should_wake(
+                summary,
+                per_thread,
+                max_turns,
+                we_also_settled=settled_by_us(outgoing, summary.get("thread_id")),
+                thread_age_hours=thread_age_hours(
+                    outgoing + incoming, summary.get("thread_id")
+                ),
+                max_age_hours=max_age_hours,
+            )
             if not allowed:
                 print(
                     json.dumps({"event": "hook-skipped", "reason": reason}),

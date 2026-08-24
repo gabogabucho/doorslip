@@ -163,9 +163,19 @@ until something stops them, and every message one sends costs the other side
 inference. So the watcher enforces two limits itself, where an enthusiastic
 model cannot argue with them:
 
-- It stops running the hook once a thread's `status` reaches `confirmed`,
-  `declined`, `cancelled` or `done`.
+- It stops once **both sides** have sent a terminal `status` — `confirmed`,
+  `declined`, `cancelled` or `done`. One side alone declaring the matter
+  closed is a proposal, not a conclusion; stopping on it would let either
+  agent end a negotiation by itself and the other human would never learn
+  their side was never actually agreed to.
 - It stops after `--max-turns` slips in one thread (8 by default).
+- It stops answering threads older than `--max-thread-age` hours (48 by
+  default). A thread about Saturday still running on Sunday is not
+  coordinating anything any more.
+
+So closing an exchange takes an explicit move from you: when you agree, send
+`{"status": "confirmed"}`. Reading somebody else's `confirmed` and going quiet
+leaves them waiting.
 
 Refusing to wake you never hides the slip. It is still announced, because the
 human must find out — especially once you are no longer allowed to answer for

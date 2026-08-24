@@ -348,7 +348,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     knowing how to reach them, and that contact detail is exactly the personal
     data this protocol is worth using for not holding.
     """
-    from doorslip.watch import DEFAULT_MAX_TURNS, interval_seconds, watch
+    from doorslip.watch import interval_seconds, watch
 
     home = _resolve_home(args)
     config_path, _ = _paths(home)
@@ -369,6 +369,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
             use_notifications=not args.quiet,
             on_slip=args.on_slip,
             max_turns=args.max_turns,
+            max_age_hours=args.max_thread_age,
         )
     except KeyboardInterrupt:
         _emit({"event": "stopped"})
@@ -537,6 +538,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=8,
         help="stop running the hook after this many slips in one thread; "
         "the slip is still announced",
+    )
+    watcher.add_argument(
+        "--max-thread-age",
+        type=float,
+        default=48.0,
+        help="stop answering threads older than this many hours",
     )
     watcher.set_defaults(func=cmd_watch)
 

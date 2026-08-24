@@ -105,11 +105,16 @@ def test_an_open_negotiation_wakes_the_agent():
 
 
 @pytest.mark.parametrize("status", ["confirmed", "declined", "cancelled", "done", "CONFIRMED"])
-def test_a_settled_thread_does_not_wake_anybody(status):
+def test_a_thread_both_sides_settled_does_not_wake_anybody(status):
     """There is nothing left to agree, so answering would be noise that costs
     the other side inference.
+
+    Both sides, not one: a single agent declaring the matter closed is making
+    a proposal, and stopping on it would let either end the negotiation alone.
     """
-    allowed, reason = should_wake(_summary(status=status), Counter(), DEFAULT_MAX_TURNS)
+    allowed, reason = should_wake(
+        _summary(status=status), Counter(), DEFAULT_MAX_TURNS, we_also_settled=True
+    )
 
     assert not allowed
     assert status.lower() in reason
@@ -143,7 +148,96 @@ def test_refusing_to_wake_never_hides_the_slip():
     """
     from doorslip.watch import summarise
 
-    settled = summarise({"from": "tomas@doorslip.test", "envelope": {"state": {"status": "confirmed"}}})
+    settled = summarise(
+        {"from": "tomas@doorslip.test", "envelope": {"state": {"status": "confirmed"}}}
+    )
 
     assert settled["event"] == "slip"
-    assert not should_wake(settled, Counter(), DEFAULT_MAX_TURNS)[0]
+    assert not should_wake(settled, Counter(), DEFAULT_MAX_TURNS, we_also_settled=True)[0]
+
+
+# -- agreement takes two --------------------------------------------------
+
+from doorslip.watch import settled_by_us, thread_age_hours
+
+
+def _sent(thread_id, status=None, timestamp=None):
+    envelope = {"thread_id": thread_id, "state": {}}
+    if status:
+        envelope["state"]["status"] = status
+    if timestamp:
+        envelope["timestamp"] = timestamp
+    return envelope
+
+
+def test_one_side_declaring_it_settled_does_not_stop_the_other():
+    """A unilateral `confirmed` is a proposal, not a conclusion. Stopping on
+    it would let either agent end a negotiation on its own, and the other
+    human would never learn their side was never actually agreed.
+    """
+    allowed, _ = should_wake(
+        _summary(status="confirmed"), Counter(), DEFAULT_MAX_TURNS, we_also_settled=False
+    )
+
+    assert allowed
+
+
+def test_both_sides_settled_ends_it():
+    allowed, reason = should_wake(
+        _summary(status="confirmed"), Counter(), DEFAULT_MAX_TURNS, we_also_settled=True
+    )
+
+    assert not allowed
+    assert "both sides" in reason
+
+
+def test_our_own_terminal_status_is_recognised():
+    assert settled_by_us([_sent("t-1", "confirmed")], "t-1")
+    assert not settled_by_us([_sent("t-1", "negotiating")], "t-1")
+    assert not settled_by_us([_sent("t-2", "confirmed")], "t-1")
+    assert not settled_by_us([], "t-1")
+
+
+def test_a_stale_thread_stops_being_answered():
+    """A thread about Saturday still running on Sunday is not coordinating
+    anything any more.
+    """
+    allowed, reason = should_wake(
+        _summary(), Counter(), DEFAULT_MAX_TURNS, thread_age_hours=72.0, max_age_hours=48.0
+    )
+
+    assert not allowed
+    assert "older than" in reason
+
+
+def test_a_fresh_thread_is_not_stale():
+    allowed, _ = should_wake(
+        _summary(), Counter(), DEFAULT_MAX_TURNS, thread_age_hours=2.0, max_age_hours=48.0
+    )
+
+    assert allowed
+
+
+def test_thread_age_comes_from_the_oldest_message_seen():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    envelopes = [
+        _sent("t-1", timestamp=(now - timedelta(hours=5)).isoformat()),
+        _sent("t-1", timestamp=(now - timedelta(hours=1)).isoformat()),
+        _sent("t-2", timestamp=(now - timedelta(hours=90)).isoformat()),
+    ]
+
+    assert 4.9 < thread_age_hours(envelopes, "t-1") < 5.1
+
+
+def test_an_unknown_thread_has_no_age_and_is_not_blocked():
+    """No information is not evidence of staleness. Guessing old would stop
+    perfectly live conversations on a machine that just restarted.
+    """
+    assert thread_age_hours([], "t-1") is None
+
+    allowed, _ = should_wake(
+        _summary(), Counter(), DEFAULT_MAX_TURNS, thread_age_hours=None, max_age_hours=48.0
+    )
+    assert allowed
