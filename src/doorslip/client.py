@@ -216,6 +216,51 @@ class Agent:
             )
         )["contact"]
 
+    def open_inbox(self, open_to_strangers: bool) -> dict[str, Any]:
+        """Let anyone write to this mailbox, or stop letting them.
+
+        For a list people subscribe to, not for a personal mailbox. Opening a
+        personal one hands your inbox to whoever finds the handle, and there
+        is no cost attached to writing to a stranger yet (spec §11 ter) to
+        make that survivable.
+        """
+        return _unwrap(
+            self._http.post(
+                "/contacts",
+                json={"open": open_to_strangers},
+                headers=self._auth_headers(),
+            )
+        )
+
+    def remove_contact(self, handle: str) -> dict[str, Any]:
+        """Stop somebody writing to you. Your side only.
+
+        They keep you in their book: you can decide who reaches you, not who
+        remembers you.
+        """
+        return _unwrap(
+            self._http.post(
+                "/contacts", json={"remove": handle}, headers=self._auth_headers()
+            )
+        )
+
+    def broadcast(self, *, state: dict[str, Any], prose: str) -> dict[str, Any]:
+        """Send the same slip to everybody in this address book.
+
+        One thread each rather than one shared thread: a reply belongs to the
+        person who wrote it, and a group thread is not something this protocol
+        does (spec §11).
+        """
+        sent, failed = [], {}
+        for handle in self.contacts():
+            try:
+                self.send(to=handle, state=dict(state), prose=prose)
+                sent.append(handle)
+            except ProtocolError as exc:
+                # One unreachable subscriber must not stop the rest.
+                failed[handle] = exc.detail
+        return {"sent": sent, "failed": failed}
+
     def contacts(self) -> list[str]:
         payload = _unwrap(self._http.get("/contacts", headers=self._auth_headers()))
         return [contact["handle"] for contact in payload["contacts"]]

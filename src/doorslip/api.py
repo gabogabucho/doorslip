@@ -304,6 +304,38 @@ def create_app(
         _notify_invitation_accepted(store, welcome, issuer, caller)
         return JSONResponse({"contact": issuer.handle}, status_code=201)
 
+    @app.post("/contacts")
+    async def change_contacts(request: Request) -> Response:
+        """Manage your own address book: open the mailbox, or drop somebody.
+
+        Both live here rather than on new endpoints because both are edits to
+        one thing — who may write to you — and the list of endpoints is closed.
+        """
+        caller = authenticate(request)
+        if isinstance(caller, Response):
+            return caller
+
+        try:
+            body = _decode_body(await request.body())
+        except ValueError as exc:
+            return _error(400, str(exc))
+
+        if "open" in body:
+            if not isinstance(body["open"], bool):
+                return _error(400, "'open' must be true or false")
+            store.set_open_inbox(caller.id, body["open"])
+            return JSONResponse({"handle": caller.handle, "open": body["open"]})
+
+        if "remove" in body:
+            handle = body["remove"]
+            if not isinstance(handle, str) or not handle:
+                return _error(400, "'remove' must be a handle")
+            if not store.remove_contact(caller.id, handle):
+                return _error(404, f"{handle} is not in your address book")
+            return JSONResponse({"removed": handle})
+
+        return _error(400, "say either 'open' or 'remove'")
+
     @app.get("/contacts")
     def contacts(request: Request) -> Response:
         caller = authenticate(request)
@@ -312,6 +344,7 @@ def create_app(
         return JSONResponse(
             {
                 "handle": caller.handle,
+                "open": store.is_open_inbox(caller.id),
                 "contacts": [
                     {"handle": c.handle, "disclosure": c.disclosure}
                     for c in store.list_contacts(caller.id)
@@ -346,10 +379,19 @@ def create_app(
         if recipient is None:
             return _error(404, "no such handle")
 
-        # The address book IS the anti-spam of v0, and it is enough. The
-        # welcome desk is the one exception (spec §8).
-        if not recipient.is_welcome and not store.is_contact(recipient.id, sender.id):
-            return _error(403, "the recipient has not accepted you")
+        # The address book IS the anti-spam of v0, and it is enough. Two
+        # exceptions: the welcome desk (spec §8), and a mailbox its owner
+        # deliberately opened — a list somebody subscribes to.
+        subscribing = False
+        if not store.is_contact(recipient.id, sender.id):
+            if recipient.is_welcome:
+                pass
+            elif store.is_open_inbox(recipient.id):
+                # Writing to an open mailbox is how you subscribe to it. The
+                # pair is created below, once the message is known to be good.
+                subscribing = True
+            else:
+                return _error(403, "the recipient has not accepted you")
 
         if store.message_exists(envelope["message_id"]):
             return _error(409, "duplicate message_id")
@@ -383,8 +425,13 @@ def create_app(
 
         if recipient.is_welcome:
             _welcome_reply(store, welcome, envelope, sender.id)
+        elif subscribing:
+            store.add_contact_pair(recipient.id, sender.id)
 
-        return JSONResponse({"accepted": envelope["message_id"]}, status_code=202)
+        return JSONResponse(
+            {"accepted": envelope["message_id"], "subscribed": subscribing or None},
+            status_code=202,
+        )
 
     @app.get("/inbox")
     def read_inbox(

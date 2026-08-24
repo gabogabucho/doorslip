@@ -371,6 +371,45 @@ def cmd_accept(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_open_inbox(args: argparse.Namespace) -> int:
+    """Open this mailbox to strangers, or close it again.
+
+    Meant for a list people subscribe to. On a personal mailbox this hands
+    your inbox to anybody who learns the handle, and the address book is the
+    only spam defence this protocol has.
+    """
+    agent = _load_agent(_resolve_home(args))
+    try:
+        _emit(agent.open_inbox(not args.off))
+    except ProtocolError as exc:
+        _emit({"error": exc.detail, "status": exc.status})
+        return 1
+    return 0
+
+
+def cmd_remove_contact(args: argparse.Namespace) -> int:
+    """Stop somebody writing to you. Your side of the book only."""
+    agent = _load_agent(_resolve_home(args))
+    try:
+        _emit(agent.remove_contact(args.handle))
+    except ProtocolError as exc:
+        _emit({"error": exc.detail, "status": exc.status})
+        return 1
+    return 0
+
+
+def cmd_broadcast(args: argparse.Namespace) -> int:
+    """Send one slip to everybody in this address book."""
+    agent = _load_agent(_resolve_home(args))
+    try:
+        state = json.loads(args.state) if args.state else {}
+    except json.JSONDecodeError as exc:
+        _emit({"error": f"--state is not valid JSON: {exc}"})
+        return 1
+    _emit(agent.broadcast(state=state, prose=args.prose))
+    return 0
+
+
 def cmd_contacts(args: argparse.Namespace) -> int:
     agent = _load_agent(_resolve_home(args))
     _emit({"contacts": agent.contacts()})
@@ -611,6 +650,25 @@ def build_parser() -> argparse.ArgumentParser:
     accept = subcommands.add_parser("accept", help="redeem an invitation code")
     accept.add_argument("code")
     accept.set_defaults(func=cmd_accept)
+
+    opener = subcommands.add_parser(
+        "open-inbox", help="let anyone write to this mailbox (for a subscribe list)"
+    )
+    opener.add_argument("--off", action="store_true", help="close it again")
+    opener.set_defaults(func=cmd_open_inbox)
+
+    remover = subcommands.add_parser(
+        "remove-contact", help="stop somebody writing to you"
+    )
+    remover.add_argument("handle")
+    remover.set_defaults(func=cmd_remove_contact)
+
+    caster = subcommands.add_parser(
+        "broadcast", help="send one slip to everybody in your address book"
+    )
+    caster.add_argument("--prose", required=True)
+    caster.add_argument("--state")
+    caster.set_defaults(func=cmd_broadcast)
 
     contacts = subcommands.add_parser("contacts", help="list your address book")
     contacts.set_defaults(func=cmd_contacts)

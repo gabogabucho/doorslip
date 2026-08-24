@@ -403,6 +403,47 @@ class Store:
         ).fetchall()
         return [h for h in (_as_human(row) for row in rows) if h is not None]
 
+    def set_open_inbox(self, human_id: str, open_to_strangers: bool) -> None:
+        """Let anyone write to this mailbox, or stop letting them.
+
+        The column has been reserved since the beginning for the open mode of
+        spec §11 ter, and this is its first honest use — not that design in
+        full, which needs a cost attached to writing to strangers, but the one
+        case where an open mailbox is the point: a list somebody subscribes to.
+        """
+        with self._db:
+            self._db.execute(
+                "UPDATE human SET accepts_unsolicited = ? WHERE id = ?",
+                (int(open_to_strangers), human_id),
+            )
+        self.log("open_inbox" if open_to_strangers else "close_inbox", human_id=human_id)
+
+    def is_open_inbox(self, human_id: str) -> bool:
+        row = self._db.execute(
+            "SELECT accepts_unsolicited FROM human WHERE id = ?", (human_id,)
+        ).fetchone()
+        return bool(row and row[0])
+
+    def remove_contact(self, owner_human_id: str, peer_handle: str) -> bool:
+        """Take somebody out of an address book — one side only.
+
+        Deliberately not symmetric, unlike accepting. Removing them from both
+        would let anybody sever a relationship they are only half of: you can
+        stop somebody writing to you, and you cannot decide on their behalf
+        that they no longer know you.
+        """
+        peer = self.find_human(peer_handle)
+        if peer is None:
+            return False
+        with self._db:
+            changed = self._db.execute(
+                "DELETE FROM contact WHERE owner_human_id = ? AND peer_human_id = ?",
+                (owner_human_id, peer.id),
+            ).rowcount
+        if changed:
+            self.log("remove_contact", human_id=owner_human_id, detail=peer_handle)
+        return changed > 0
+
     def redeem_or_attach_welcome_key(self, human_id: str, pubkey: str) -> None:
         """Attach a key to the welcome desk after a key file was lost.
 
