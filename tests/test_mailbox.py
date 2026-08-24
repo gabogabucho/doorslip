@@ -621,3 +621,39 @@ def test_an_unreadable_outbox_line_does_not_cost_the_history(gabo, tmp_path):
         broken.write('{"half a line\n')
 
     assert len(agent.sent()) == 1
+
+
+def test_deleting_a_key_file_is_not_revocation(gabo, tomas, http):
+    """A published review claimed you revoke an agent by deleting its folder.
+
+    You do not. That removes your own use of the key; anybody holding a copy
+    keeps signing as you until the server is told to stop accepting it — and
+    somebody who believes otherwise thinks they are protected when they are
+    not.
+    """
+    import copy
+
+    _introduce(gabo, tomas)
+    stolen = Agent(
+        http, handle=gabo.handle, label="hermes", keypair=copy.deepcopy(gabo._keypair)
+    )
+
+    # The folder is gone; the copy still signs as this identity.
+    stolen.send(to=tomas.handle, state={"topic": "x"}, prose="still me")
+    assert any(m["from"] == gabo.handle for m in tomas.inbox())
+
+    gabo.revoke(gabo.pubkey)
+
+    with pytest.raises(ProtocolError) as caught:
+        stolen.send(to=tomas.handle, state={"topic": "y"}, prose="and now?")
+    assert caught.value.status == 401
+
+
+def test_revoking_does_not_erase_what_already_arrived(gabo, tomas):
+    """Spec §7.6. The signature was checked on arrival and that stands."""
+    _introduce(gabo, tomas)
+    gabo.send(to=tomas.handle, state={"topic": "barbecue"}, prose="Saturday?")
+
+    gabo.revoke(gabo.pubkey)
+
+    assert any(m["envelope"]["prose"] == "Saturday?" for m in tomas.inbox())

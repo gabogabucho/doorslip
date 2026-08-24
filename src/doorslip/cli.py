@@ -248,6 +248,25 @@ def cmd_send(args: argparse.Namespace) -> int:
     except json.JSONDecodeError as exc:
         _emit({"error": f"--state is not valid JSON: {exc}"})
         return 1
+    parent = args.parent
+    if parent in ("latest", "last"):
+        # Copying an id by hand is the easiest thing in this protocol to get
+        # wrong, and getting it wrong is expensive: a plausible-looking wrong
+        # parent produces a divergence rather than an error, so the thread
+        # splits and neither side is told they are answering the wrong message.
+        if not args.thread:
+            _emit({"error": "--parent latest needs --thread to know which one"})
+            return 1
+        try:
+            applied = agent.thread_state(args.thread).applied
+        except Exception as exc:
+            _emit({"error": f"cannot resolve --parent latest: {exc}"})
+            return 1
+        if not applied:
+            _emit({"error": "that thread has no messages on this machine"})
+            return 1
+        parent = applied[-1]
+
     try:
         _emit(
             agent.send(
@@ -255,7 +274,7 @@ def cmd_send(args: argparse.Namespace) -> int:
                 state=state,
                 prose=args.prose,
                 thread_id=args.thread,
-                parent_message_id=args.parent,
+                parent_message_id=parent,
                 resolves=args.resolves or None,
             )
         )
@@ -300,6 +319,22 @@ def cmd_ack(args: argparse.Namespace) -> int:
         _emit({"error": exc.detail, "status": exc.status})
         return 1
     _emit({"acked": args.message_id})
+    return 0
+
+
+def cmd_revoke_key(args: argparse.Namespace) -> int:
+    """Stop one of this identity's keys from sending anything further.
+
+    Deleting the key file is not this. That takes away your own use of the
+    key; anyone holding a copy keeps signing as you until the server is told
+    to stop accepting it.
+    """
+    agent = _load_agent(_resolve_home(args))
+    try:
+        _emit(agent.revoke(args.pubkey))
+    except ProtocolError as exc:
+        _emit({"error": exc.detail, "status": exc.status})
+        return 1
     return 0
 
 
@@ -526,7 +561,11 @@ def build_parser() -> argparse.ArgumentParser:
     send.add_argument("--prose", required=True)
     send.add_argument("--state", help="JSON object; a merge patch when replying")
     send.add_argument("--thread")
-    send.add_argument("--parent")
+    send.add_argument(
+        "--parent",
+        help="the message being answered; use 'latest' to let this resolve "
+        "it from the thread instead of copying an id",
+    )
     send.add_argument(
         "--resolves",
         nargs="+",
@@ -553,6 +592,12 @@ def build_parser() -> argparse.ArgumentParser:
     ack = subcommands.add_parser("ack", help="confirm a message was incorporated")
     ack.add_argument("message_id")
     ack.set_defaults(func=cmd_ack)
+
+    revoke = subcommands.add_parser(
+        "revoke-key", help="stop one of your keys from sending (server side)"
+    )
+    revoke.add_argument("--pubkey", required=True)
+    revoke.set_defaults(func=cmd_revoke_key)
 
     invite = subcommands.add_parser("invite", help="mint invitation codes")
     invite.add_argument("--count", type=int, default=1)

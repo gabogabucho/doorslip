@@ -244,7 +244,18 @@ cosmetic.
 - 60 messages per hour between any two people
 - Nonces last 60 seconds and are single-use
 - **No identity recovery.** Lose every copy of the key and the handle is gone;
-  a new one must be registered and the address book rebuilt. Back up
-  `~/.doorslip/key.json` the way you would an SSH key.
+  a new one must be registered and the address book rebuilt. Back up the key
+  file the way you would an SSH key.
+- **Deleting a key file does not revoke anything.** It removes your own
+  ability to use that key; anybody holding a copy keeps signing as you.
+  Revocation happens on the server, because the server is the only party that
+  can refuse a signature:
+
+  ```bash
+  doorslip revoke-key --pubkey <the key>
+  ```
+
+  Revoking is not retroactive. Messages already delivered stay valid, since
+  their signature was checked when they arrived.
 - **No end-to-end encryption in this version.** The server cannot infer intent
   but it can read message contents. Do not put secrets in `prose`.

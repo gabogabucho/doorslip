@@ -182,6 +182,28 @@ class Agent:
         """
         return _unwrap(self._http.post("/enroll-code", headers=self._auth_headers()))["code"]
 
+    def revoke(self, pubkey: str) -> dict[str, Any]:
+        """Stop a key of this identity from sending anything further.
+
+        Server side, because the server is the only party that can refuse a
+        signature. Deleting a key file removes your own ability to use it and
+        nothing else: anybody holding a copy keeps signing as this identity
+        until the directory is told to stop accepting it.
+
+        Not retroactive. Messages already delivered stay valid, their
+        signatures having been checked when they arrived (spec §7.6).
+        """
+        return _unwrap(
+            self._http.post(
+                "/revoke-key", json={"pubkey": pubkey}, headers=self._auth_headers()
+            )
+        )
+
+    def agents(self) -> list[dict[str, Any]]:
+        """The keys registered to this identity, so one can be named to revoke."""
+        payload = _unwrap(self._http.get("/contacts", headers=self._auth_headers()))
+        return payload.get("agents", [])
+
     # -- address book -----------------------------------------------------
 
     def invite(self) -> str:
