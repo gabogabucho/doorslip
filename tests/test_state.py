@@ -1,0 +1,133 @@
+"""Thread state reconstruction (spec §6.1)."""
+
+import pytest
+
+from doorslip.state import ThreadBroken, merge_patch, reconstruct
+
+
+def _message(message_id, parent, state):
+    return {"message_id": message_id, "parent_message_id": parent, "state": state}
+
+
+# -- merge patch ----------------------------------------------------------
+
+
+def test_a_patch_only_touches_the_keys_it_names():
+    result = merge_patch({"topic": "barbecue", "where": "my place"}, {"where": "the park"})
+
+    assert result == {"topic": "barbecue", "where": "the park"}
+
+
+def test_nested_objects_merge_rather_than_replace():
+    result = merge_patch(
+        {"budget": {"amount": 100, "currency": "ARS"}}, {"budget": {"amount": 200}}
+    )
+
+    assert result == {"budget": {"amount": 200, "currency": "ARS"}}
+
+
+def test_arrays_are_replaced_whole_not_merged():
+    """RFC 7386. To change one task you resend the entire `tasks` array.
+
+    Written as a test because two implementations left to guess will guess
+    differently, and the divergence only surfaces once they talk to each other.
+    """
+    result = merge_patch({"tasks": ["fire", "salads"]}, {"tasks": ["wine"]})
+
+    assert result == {"tasks": ["wine"]}
+
+
+def test_null_deletes_the_key():
+    """The trap: an agent meaning "I do not know yet" must send a value.
+
+    Sending null removes the field from the thread entirely, and the other
+    side cannot tell the difference between "unknown" and "withdrawn".
+    """
+    result = merge_patch({"budget": {"amount": 100}, "where": "my place"}, {"budget": None})
+
+    assert result == {"where": "my place"}
+
+
+# -- reconstruction -------------------------------------------------------
+
+
+def test_patches_apply_in_parent_order_not_arrival_order():
+    """The whole reason parent_message_id exists.
+
+    These are handed over in reverse. If reconstruction followed arrival or
+    timestamp order the result would be wrong, and the done-criterion of §2
+    depends on it being the same every time.
+    """
+    messages = [
+        _message("c", "b", {"status": "confirmed"}),
+        _message("a", None, {"topic": "barbecue", "status": "proposed"}),
+        _message("b", "a", {"where": "my place"}),
+    ]
+
+    result = reconstruct(messages)
+
+    assert result.state == {
+        "topic": "barbecue",
+        "status": "confirmed",
+        "where": "my place",
+    }
+    assert result.applied == ["a", "b", "c"]
+
+
+def test_a_single_message_thread_reconstructs_to_its_own_state():
+    result = reconstruct([_message("a", None, {"topic": "barbecue"})])
+
+    assert result.state == {"topic": "barbecue"}
+    assert not result.diverged
+
+
+def test_two_messages_claiming_the_same_parent_are_reported_as_divergence():
+    """Both sides wrote at once. The agent finds out instead of one silently
+    overwriting the other. Resolving it is out of scope for v0 by design.
+    """
+    messages = [
+        _message("a", None, {"topic": "barbecue"}),
+        _message("b", "a", {"where": "my place"}),
+        _message("c", "a", {"where": "the park"}),
+    ]
+
+    result = reconstruct(messages)
+
+    assert result.diverged
+    assert result.divergences[0].parent_id == "a"
+    assert result.divergences[0].message_ids == ["b", "c"]
+
+
+def test_a_missing_parent_breaks_the_thread_loudly():
+    messages = [
+        _message("a", None, {"topic": "barbecue"}),
+        _message("c", "b-never-arrived", {"status": "confirmed"}),
+    ]
+
+    with pytest.raises(ThreadBroken):
+        reconstruct(messages)
+
+
+def test_a_thread_needs_exactly_one_root():
+    messages = [
+        _message("a", None, {"topic": "barbecue"}),
+        _message("b", None, {"topic": "something else"}),
+    ]
+
+    with pytest.raises(ThreadBroken):
+        reconstruct(messages)
+
+
+def test_a_cycle_is_refused_instead_of_looping_forever():
+    messages = [
+        _message("a", None, {"topic": "barbecue"}),
+        _message("b", "c", {}),
+        _message("c", "b", {}),
+    ]
+
+    with pytest.raises(ThreadBroken):
+        reconstruct(messages)
+
+
+def test_an_empty_thread_reconstructs_to_an_empty_state():
+    assert reconstruct([]).state == {}
