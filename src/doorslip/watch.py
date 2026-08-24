@@ -16,17 +16,32 @@ that something arrived; the human decides to read it.
 stays unacknowledged until an agent has genuinely incorporated it (spec §7.7).
 "Anything I have not processed" is a better question than "anything since
 timestamp X", and it survives a machine being off for a week.
+
+With `--on-slip` the watcher can wake an agent instead of only telling one.
+That is what turns Doorslip into something two agents can use unattended — and
+it is why the brakes below live here rather than in the agent's instructions.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
+from collections import Counter
 from typing import Any
 
 INTERVALS = {"15m": 900, "30m": 1800, "60m": 3600}
+
+# A thread carrying one of these has finished negotiating. Announce it, but do
+# not wake an agent to answer: there is nothing left to agree.
+TERMINAL_STATUS = {"confirmed", "declined", "cancelled", "done"}
+
+# Conversations between humans end because humans get bored. Two agents do not,
+# so the ceiling is enforced out here where an enthusiastic model cannot talk
+# its way past it.
+DEFAULT_MAX_TURNS = 8
 
 
 def interval_seconds(setting: str) -> int | None:
@@ -46,6 +61,48 @@ def summarise(message: dict[str, Any]) -> dict[str, Any]:
         "message_id": message.get("message_id"),
         "thread_id": message.get("thread_id"),
     }
+
+
+def should_wake(summary: dict[str, Any], seen: Counter, max_turns: int) -> tuple[bool, str]:
+    """Whether to run the hook for this slip, and why not when the answer is no.
+
+    Refusing still leaves the slip announced. Stopping the automation is not
+    the same as hiding the message: the human should always find out, even
+    when their agent is no longer allowed to answer on its own.
+    """
+    status = (summary.get("status") or "").lower()
+    if status in TERMINAL_STATUS:
+        return False, f"thread reached {status}"
+
+    thread = summary.get("thread_id")
+    if thread and seen[thread] >= max_turns:
+        return False, f"thread hit the {max_turns}-turn ceiling"
+
+    return True, ""
+
+
+def run_hook(command: str, summary: dict[str, Any]) -> dict[str, Any]:
+    """Run the configured command, with the slip's metadata in the environment.
+
+    Metadata only, same as everywhere else: a hook that received the message
+    body would put a private conversation into a process table and any log the
+    command happens to write.
+    """
+    env = dict(os.environ)
+    for key in ("from", "topic", "status", "message_id", "thread_id"):
+        env[f"DOORSLIP_{key.upper()}"] = str(summary.get(key) or "")
+
+    try:
+        finished = subprocess.run(
+            command, shell=True, env=env, capture_output=True, text=True, timeout=900
+        )
+        return {"event": "hook", "exit_code": finished.returncode}
+    except subprocess.TimeoutExpired:
+        return {"event": "hook", "error": "timed out after 15 minutes"}
+    except Exception as exc:
+        # A broken hook must not take the watcher down with it. Losing the
+        # automation is recoverable; losing the notifications is not.
+        return {"event": "hook", "error": str(exc)}
 
 
 def notify(summary: dict[str, Any]) -> None:
@@ -90,15 +147,31 @@ def notify(summary: dict[str, Any]) -> None:
         pass
 
 
-def watch(agent: Any, *, every: int, use_notifications: bool = True) -> None:
+def watch(
+    agent: Any,
+    *,
+    every: int,
+    use_notifications: bool = True,
+    on_slip: str | None = None,
+    max_turns: int = DEFAULT_MAX_TURNS,
+) -> None:
     """Poll until interrupted, printing one JSON line per newly seen slip.
 
     JSON on stdout rather than prose, because the reader is a program: an
     agent tails this and turns it into a sentence for its human.
     """
     announced: set[str] = set()
+    per_thread: Counter = Counter()
     print(
-        json.dumps({"event": "watching", "handle": agent.handle, "every_seconds": every}),
+        json.dumps(
+            {
+                "event": "watching",
+                "handle": agent.handle,
+                "every_seconds": every,
+                "hook": bool(on_slip),
+                "max_turns": max_turns if on_slip else None,
+            }
+        ),
         flush=True,
     )
     while True:
@@ -120,5 +193,19 @@ def watch(agent: Any, *, every: int, use_notifications: bool = True) -> None:
             print(json.dumps(summary, ensure_ascii=False), flush=True)
             if use_notifications:
                 notify(summary)
+
+            if not on_slip:
+                continue
+
+            allowed, reason = should_wake(summary, per_thread, max_turns)
+            if not allowed:
+                print(
+                    json.dumps({"event": "hook-skipped", "reason": reason}),
+                    flush=True,
+                )
+                continue
+            if summary.get("thread_id"):
+                per_thread[summary["thread_id"]] += 1
+            print(json.dumps(run_hook(on_slip, summary)), flush=True)
 
         time.sleep(every)

@@ -366,6 +366,18 @@ class Store:
         assert human is not None  # FK guarantees it
         return human
 
+    def everyone_but_the_desk(self) -> list[Human]:
+        """Every registered person, for an operator announcement.
+
+        The welcome desk is excluded: it would be the server writing to
+        itself, and its mailbox is nobody's to read.
+        """
+        rows = self._db.execute(
+            "SELECT id, handle, canonical_pubkey, is_welcome FROM human"
+            " WHERE is_welcome = 0 ORDER BY created_at"
+        ).fetchall()
+        return [h for h in (_as_human(row) for row in rows) if h is not None]
+
     def redeem_or_attach_welcome_key(self, human_id: str, pubkey: str) -> None:
         """Attach a key to the welcome desk after a key file was lost.
 

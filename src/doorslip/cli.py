@@ -330,7 +330,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     knowing how to reach them, and that contact detail is exactly the personal
     data this protocol is worth using for not holding.
     """
-    from doorslip.watch import interval_seconds, watch
+    from doorslip.watch import DEFAULT_MAX_TURNS, interval_seconds, watch
 
     home = _resolve_home(args)
     config_path, _ = _paths(home)
@@ -345,9 +345,65 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        watch(_load_agent(home), every=seconds, use_notifications=not args.quiet)
+        watch(
+            _load_agent(home),
+            every=seconds,
+            use_notifications=not args.quiet,
+            on_slip=args.on_slip,
+            max_turns=args.max_turns,
+        )
     except KeyboardInterrupt:
         _emit({"event": "stopped"})
+    return 0
+
+
+def cmd_announce(args: argparse.Namespace) -> int:
+    """Send one slip from the welcome desk to everybody registered here.
+
+    Operator only: it needs the database, which means it needs the server.
+    That is the whole gate, and it is enough — but a server that writes to its
+    users often is worse than one that never does, so this is for things that
+    genuinely change what they can expect, not for news.
+
+    It goes out as an ordinary message on purpose. A protocol change reaches
+    people through the protocol itself, and their agent treats it as data like
+    anything else: it shows them, it does not act.
+    """
+    from doorslip.api import _ensure_welcome_agent
+    from doorslip.envelope import parse
+    from doorslip.store import Store, connect
+
+    db_path = Path(args.db)
+    store = Store(connect(db_path))
+    welcome = _ensure_welcome_agent(
+        store, args.welcome_handle, db_path.with_suffix(".welcome.json")
+    )
+    recipients = store.everyone_but_the_desk()
+
+    if args.dry_run:
+        _emit({"would_reach": [h.handle for h in recipients], "topic": args.topic})
+        return 0
+
+    agent_id = store.agent_id_for(welcome.keypair.public_key)
+    if agent_id is None:
+        _emit({"error": "the welcome desk has no usable key"})
+        return 1
+
+    delivered = []
+    for human in recipients:
+        raw, signature = welcome.announce(human.handle, args.topic, args.prose)
+        store.add_contact_pair(welcome.human_id, human.id)
+        store.store_message(
+            envelope=parse(raw),
+            raw=raw,
+            signature=signature,
+            from_human_id=welcome.human_id,
+            from_agent_id=agent_id,
+            to_human_id=human.id,
+        )
+        delivered.append(human.handle)
+
+    _emit({"announced_to": delivered, "topic": args.topic})
     return 0
 
 
@@ -441,7 +497,31 @@ def build_parser() -> argparse.ArgumentParser:
     watcher = subcommands.add_parser("watch", help="poll locally and announce new slips")
     watcher.add_argument("--every", choices=["15m", "30m", "60m"], help="overrides the stored setting")
     watcher.add_argument("--quiet", action="store_true", help="no desktop notifications")
+    watcher.add_argument(
+        "--on-slip",
+        help="shell command to run when a slip arrives; the metadata is in "
+        "DOORSLIP_FROM, DOORSLIP_TOPIC, DOORSLIP_THREAD_ID and friends",
+    )
+    watcher.add_argument(
+        "--max-turns",
+        type=int,
+        default=8,
+        help="stop running the hook after this many slips in one thread; "
+        "the slip is still announced",
+    )
     watcher.set_defaults(func=cmd_watch)
+
+    announce = subcommands.add_parser(
+        "announce", help="send one slip to everybody registered (operator only)"
+    )
+    announce.add_argument("--db", required=True)
+    announce.add_argument("--topic", required=True)
+    announce.add_argument("--prose", required=True)
+    announce.add_argument("--welcome-handle", default="welcome@doorslip.test")
+    announce.add_argument(
+        "--dry-run", action="store_true", help="list who it would reach and send nothing"
+    )
+    announce.set_defaults(func=cmd_announce)
 
     serve = subcommands.add_parser("serve", help="run the server")
     serve.add_argument("--db", default=":memory:")

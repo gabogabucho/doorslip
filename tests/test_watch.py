@@ -77,3 +77,73 @@ def test_manual_means_do_not_watch():
     """
     assert interval_seconds("manual") is None
     assert interval_seconds("whatever") is None
+
+
+# -- waking an agent, and the brakes on doing so --------------------------
+
+from collections import Counter
+
+from doorslip.watch import DEFAULT_MAX_TURNS, should_wake
+
+
+def _summary(**extra):
+    base = {
+        "from": "tomas@doorslip.test",
+        "topic": "barbecue",
+        "status": "proposed",
+        "thread_id": "t-1",
+        "message_id": "m-1",
+    }
+    base.update(extra)
+    return base
+
+
+def test_an_open_negotiation_wakes_the_agent():
+    allowed, _ = should_wake(_summary(), Counter(), DEFAULT_MAX_TURNS)
+
+    assert allowed
+
+
+@pytest.mark.parametrize("status", ["confirmed", "declined", "cancelled", "done", "CONFIRMED"])
+def test_a_settled_thread_does_not_wake_anybody(status):
+    """There is nothing left to agree, so answering would be noise that costs
+    the other side inference.
+    """
+    allowed, reason = should_wake(_summary(status=status), Counter(), DEFAULT_MAX_TURNS)
+
+    assert not allowed
+    assert status.lower() in reason
+
+
+def test_the_turn_ceiling_stops_the_hook():
+    """Conversations between people end because people get bored. Two agents
+    do not, so the ceiling lives out here where an enthusiastic model cannot
+    talk its way past it.
+    """
+    seen = Counter({"t-1": 3})
+
+    allowed, reason = should_wake(_summary(), seen, 3)
+
+    assert not allowed
+    assert "3-turn" in reason
+
+
+def test_the_ceiling_is_per_thread_not_global():
+    seen = Counter({"t-1": 5})
+
+    allowed, _ = should_wake(_summary(thread_id="t-2"), seen, 5)
+
+    assert allowed
+
+
+def test_refusing_to_wake_never_hides_the_slip():
+    """Stopping the automation is not the same as hiding the message. The
+    human still has to find out, especially once their agent is no longer
+    allowed to answer on its own.
+    """
+    from doorslip.watch import summarise
+
+    settled = summarise({"from": "tomas@doorslip.test", "envelope": {"state": {"status": "confirmed"}}})
+
+    assert settled["event"] == "slip"
+    assert not should_wake(settled, Counter(), DEFAULT_MAX_TURNS)[0]

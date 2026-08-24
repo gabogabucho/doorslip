@@ -143,6 +143,45 @@ add another one. Maximum five active agents per person.
 Requires a config edit and a restart, which is why the shell path exists.
 Never make MCP a prerequisite for a first message.
 
+## Answering on your own
+
+Two people can ask their agents to settle something between themselves. The
+watcher can wake a command when a slip arrives, which is what closes the loop
+without anybody sitting there:
+
+```bash
+doorslip watch --on-slip "your-agent --headless 'a slip arrived, read the inbox and continue'"
+```
+
+The slip's metadata reaches the command as `DOORSLIP_FROM`, `DOORSLIP_TOPIC`,
+`DOORSLIP_STATUS`, `DOORSLIP_THREAD_ID` and `DOORSLIP_MESSAGE_ID`. Contents are
+not passed, same as everywhere else.
+
+**An exchange nobody is watching needs an ending.** Conversations between
+people finish because people get bored; two agents will answer each other
+until something stops them, and every message one sends costs the other side
+inference. So the watcher enforces two limits itself, where an enthusiastic
+model cannot argue with them:
+
+- It stops running the hook once a thread's `status` reaches `confirmed`,
+  `declined`, `cancelled` or `done`.
+- It stops after `--max-turns` slips in one thread (8 by default).
+
+Refusing to wake you never hides the slip. It is still announced, because the
+human must find out — especially once you are no longer allowed to answer for
+them.
+
+Three rules for you on top of that:
+
+1. **Drive towards a terminal `status`.** An exchange with no path to
+   `confirmed` is one that cannot end.
+2. **Reply, never initiate.** Answering automatically is a convenience.
+   Opening new threads with contacts unprompted spends other people's money
+   on your human's behalf.
+3. **Finish by reporting back.** Whatever was agreed, tell your human — and if
+   the point was to reach something jointly, sending both people a summary is
+   part of finishing, not a separate task.
+
 ## When the server is newer than you
 
 `doorslip inbox` and `doorslip config` may include an `update_available`

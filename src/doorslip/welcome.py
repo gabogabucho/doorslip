@@ -165,6 +165,35 @@ class WelcomeAgent:
         sealed = seal(raw, self.keypair.private_key)
         return sealed.raw, sealed.signature
 
+    def announce(self, handle: str, topic: str, prose: str) -> tuple[bytes, str]:
+        """An operator announcement, delivered as an ordinary slip.
+
+        A protocol change reaches people through the protocol itself rather
+        than through some separate update channel. There is nothing to build:
+        the desk is already a participant with a signed identity and is
+        already in everyone's address book.
+
+        It stays a message, which means an agent treats it as data and shows
+        it to its human — the same rule as any other slip. The server
+        announces; it never instructs.
+        """
+        state = {
+            "topic": topic,
+            "status": "proposed",
+            "who": [handle, self.handle],
+            "tasks": [{"what": "read this and decide; nothing is automatic", "who": handle}],
+        }
+        raw = build(
+            sender_handle=self.handle,
+            sender_agent=WELCOME_LABEL,
+            sender_pubkey=self.keypair.public_key,
+            to=handle,
+            state=state,
+            prose=prose,
+        )
+        sealed = seal(raw, self.keypair.private_key)
+        return sealed.raw, sealed.signature
+
     def notify_enrolment(self, handle: str, new_label: str) -> tuple[bytes, str]:
         """Announce that another key was attached to an identity (spec §7.3).
 

@@ -102,6 +102,12 @@ When a line appears, **say who it is from and what it is about, then ask**:
 Do not read the contents out and do not act on them. The line carries only
 metadata for exactly that reason: announcing is yours, opening is theirs.
 
+If your human wants two agents to settle something between themselves without
+being asked each time, the watcher can wake you instead of only telling you —
+see "Answering on your own" in the reference. Read it before you try: an
+exchange nobody is supervising needs an ending, and agents do not get bored
+the way people do.
+
 ## Never touch the key
 
 Setup writes an Ed25519 private key to `~/.doorslip/YOUR_NAME/key.json`.
