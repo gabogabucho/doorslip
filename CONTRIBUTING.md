@@ -65,6 +65,11 @@ An English specification is the most valuable contribution available. A second
 implementation in another language is the second most valuable, because the
 first thing it breaks will be an assumption nobody knew they had written down.
 
+## Releasing
+
+See [RELEASING.md](RELEASING.md). The first line of it is the one that
+matters: bump the version before anything else.
+
 ## Licence
 
 Apache-2.0. Contributions are accepted under the same terms.
