@@ -25,10 +25,68 @@ from typing import Any
 
 from doorslip.client import Agent, ProtocolError, load_or_create_keypair
 
-DEFAULT_HOME = Path.home() / ".doorslip"
+# Identities live under the human's own home, never inside an agent's install
+# tree. Uninstalling an agent must not take the mailbox with it: there is no
+# identity recovery (spec §10), so a deleted key is a handle lost for good.
+DOORSLIP_ROOT = Path.home() / ".doorslip"
 CONFIG_NAME = "config.json"
 KEY_NAME = "key.json"
 OUTBOX_NAME = "outbox.jsonl"
+
+# Kept for callers that still import it; the real default is per agent.
+DEFAULT_HOME = DOORSLIP_ROOT
+
+
+def agent_home(label: str, root: Path | None = None) -> Path:
+    """Where one agent's key and settings live.
+
+    One directory per agent, not one per machine. The identity is shared —
+    same human, same handle, same address book — but each agent holds its own
+    key, which is what makes revoking one of them possible without locking the
+    others out (spec §7.3).
+    """
+    return (root or DOORSLIP_ROOT) / label
+
+
+def discover_home(root: Path | None = None) -> Path | None:
+    """Find the only configured agent, if there is exactly one.
+
+    Someone running a single agent should never have to think about this. With
+    several, guessing would be worse than asking: acting as the wrong agent
+    sends messages signed by a key the human did not choose.
+    """
+    base = root or DOORSLIP_ROOT
+    if not base.is_dir():
+        return None
+    candidates = sorted(d for d in base.iterdir() if (d / CONFIG_NAME).is_file())
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _resolve_home(args: argparse.Namespace) -> Path:
+    if getattr(args, "home", None):
+        return Path(args.home)
+    found = discover_home()
+    if found is not None:
+        return found
+    base = DOORSLIP_ROOT
+    configured = (
+        sorted(d.name for d in base.iterdir() if (d / CONFIG_NAME).is_file())
+        if base.is_dir()
+        else []
+    )
+    if configured:
+        raise SystemExit(
+            json.dumps(
+                {
+                    "error": "several agents are set up here; say which one with --home",
+                    "agents": configured,
+                    "example": f"doorslip --home {base / configured[0]} inbox",
+                }
+            )
+        )
+    raise SystemExit(json.dumps({"error": "no agent set up yet; run `doorslip setup` first"}))
 
 
 def _paths(home: Path) -> tuple[Path, Path]:
@@ -69,7 +127,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
     """
     import httpx
 
-    home = Path(args.home)
+    # One directory per agent, named after its label. A second agent on the
+    # same machine enrols beside this one instead of overwriting its key.
+    home = Path(args.home) if args.home else agent_home(args.label)
     home.mkdir(parents=True, exist_ok=True)
     config_path, key_path = _paths(home)
 
@@ -148,7 +208,7 @@ def cmd_config(args: argparse.Namespace) -> int:
     The key lives in a separate file and is not read here at all, so showing
     someone your settings can never leak your identity.
     """
-    config_path, _ = _paths(Path(args.home))
+    config_path, _ = _paths(_resolve_home(args))
     if not config_path.exists():
         _emit({"error": "not set up yet; run `doorslip setup` first"})
         return 1
@@ -157,7 +217,7 @@ def cmd_config(args: argparse.Namespace) -> int:
 
 
 def cmd_send(args: argparse.Namespace) -> int:
-    agent = _load_agent(Path(args.home))
+    agent = _load_agent(_resolve_home(args))
     try:
         state = json.loads(args.state) if args.state else {}
     except json.JSONDecodeError as exc:
@@ -180,13 +240,13 @@ def cmd_send(args: argparse.Namespace) -> int:
 
 
 def cmd_inbox(args: argparse.Namespace) -> int:
-    agent = _load_agent(Path(args.home))
+    agent = _load_agent(_resolve_home(args))
     _emit({"messages": agent.inbox(unacked_only=args.unacked)})
     return 0
 
 
 def cmd_ack(args: argparse.Namespace) -> int:
-    agent = _load_agent(Path(args.home))
+    agent = _load_agent(_resolve_home(args))
     try:
         agent.ack(args.message_id)
     except ProtocolError as exc:
@@ -203,14 +263,14 @@ def cmd_invite(args: argparse.Namespace) -> int:
     A single code handed to a group is not an invitation, it is an open door,
     and it would dissolve the allowlist that is the whole trust model.
     """
-    agent = _load_agent(Path(args.home))
+    agent = _load_agent(_resolve_home(args))
     _emit({"codes": [agent.invite() for _ in range(args.count)]})
     return 0
 
 
 def cmd_enroll_code(args: argparse.Namespace) -> int:
     """Mint a code so another of YOUR agents can join this same mailbox."""
-    agent = _load_agent(Path(args.home))
+    agent = _load_agent(_resolve_home(args))
     try:
         _emit({"code": agent.enroll_code()})
     except ProtocolError as exc:
@@ -220,7 +280,7 @@ def cmd_enroll_code(args: argparse.Namespace) -> int:
 
 
 def cmd_accept(args: argparse.Namespace) -> int:
-    agent = _load_agent(Path(args.home))
+    agent = _load_agent(_resolve_home(args))
     try:
         _emit({"contact": agent.accept(args.code)})
     except ProtocolError as exc:
@@ -230,14 +290,14 @@ def cmd_accept(args: argparse.Namespace) -> int:
 
 
 def cmd_contacts(args: argparse.Namespace) -> int:
-    agent = _load_agent(Path(args.home))
+    agent = _load_agent(_resolve_home(args))
     _emit({"contacts": agent.contacts()})
     return 0
 
 
 def cmd_thread(args: argparse.Namespace) -> int:
     """Fold one thread into its current state (spec §6.1)."""
-    agent = _load_agent(Path(args.home))
+    agent = _load_agent(_resolve_home(args))
     result = agent.thread_state(args.thread_id)
     _emit(
         {
@@ -259,7 +319,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     """
     from doorslip.watch import interval_seconds, watch
 
-    home = Path(args.home)
+    home = _resolve_home(args)
     config_path, _ = _paths(home)
     setting = args.every
     if setting is None:
@@ -296,7 +356,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="doorslip", description="Doorslip agent client")
-    parser.add_argument("--home", default=str(DEFAULT_HOME), help="config and key directory")
+    parser.add_argument(
+        "--home",
+        default=None,
+        help="this agent's directory; defaults to ~/.doorslip/<label>, "
+        "and is discovered automatically when only one agent is set up",
+    )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     setup = subcommands.add_parser("setup", help="generate a key and register")

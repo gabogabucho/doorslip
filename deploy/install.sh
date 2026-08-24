@@ -81,6 +81,9 @@ if [[ -f "$HERE/SKILL.md" ]]; then
 	render "$HERE/SKILL.md" > "$WEB_DIR/skill.md"
 	if [[ -n "$LOCAL_WHEEL" ]]; then
 		WHEEL_NAME="$(basename "$LOCAL_WHEEL")"
+		# Drop older wheels: serving two versions side by side invites
+		# somebody to install the stale one from a link they kept.
+		rm -f "$WEB_DIR"/doorslip-*.whl
 		cp "$LOCAL_WHEEL" "$WEB_DIR/$WHEEL_NAME"
 		# Until the package is on PyPI, point installs at the wheel served
 		# alongside this document.

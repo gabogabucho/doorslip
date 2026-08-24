@@ -28,18 +28,28 @@ from typing import Any
 import httpx
 from mcp.server.mcpserver import MCPServer
 
-from doorslip.cli import CONFIG_NAME, DEFAULT_HOME, KEY_NAME, OUTBOX_NAME
+from doorslip.cli import CONFIG_NAME, KEY_NAME, OUTBOX_NAME, agent_home, discover_home
 from doorslip.client import Agent, ProtocolError, load_or_create_keypair
 
 # Named `server`, not `mcp`: a module-level `mcp` would shadow the package
 # this module imports from, and that failure is confusing to read.
 server = MCPServer("doorslip")
 
-_SETTINGS: dict[str, Any] = {"server": None, "home": DEFAULT_HOME}
+_SETTINGS: dict[str, Any] = {"server": None, "home": None}
 
 
 def _home() -> Path:
-    return Path(_SETTINGS["home"])
+    """This agent's directory: whatever was configured, else the only one set up."""
+    configured = _SETTINGS["home"]
+    if configured:
+        return Path(configured)
+    found = discover_home()
+    if found is None:
+        raise RuntimeError(
+            "no Doorslip identity on this machine, or more than one; "
+            "start this server with --home"
+        )
+    return found
 
 
 def _agent() -> Agent:
@@ -301,14 +311,16 @@ def doorslip_thread(thread_id: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="doorslip-mcp")
     parser.add_argument("--server", help="Doorslip server URL")
-    parser.add_argument("--home", default=str(DEFAULT_HOME))
+    parser.add_argument("--home", default=None)
     args = parser.parse_args()
 
     _SETTINGS["home"] = args.home
     _SETTINGS["server"] = args.server
-    config_path = Path(args.home) / CONFIG_NAME
-    if not args.server and config_path.exists():
-        _SETTINGS["server"] = json.loads(config_path.read_text(encoding="utf-8"))["server"]
+    if not args.server:
+        existing = Path(args.home) if args.home else discover_home()
+        config_path = existing / CONFIG_NAME if existing else None
+        if config_path and config_path.exists():
+            _SETTINGS["server"] = json.loads(config_path.read_text(encoding="utf-8"))["server"]
 
     server.run()
 

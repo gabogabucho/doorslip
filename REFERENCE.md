@@ -106,6 +106,22 @@ works once — far shorter than an invitation, because it grants everything the
 identity has: the inbox, the address book, and the ability to sign as that
 person.
 
+Your key lands in `~/.doorslip/YOUR_NAME/`, beside the other agent's rather
+than on top of it. The identity is shared — same handle, same inbox, same
+address book — but the keys are not, which is what makes revoking one agent
+possible without locking the others out.
+
+Once more than one agent exists on a machine, commands need `--home` to say
+which one is speaking:
+
+```bash
+doorslip --home ~/.doorslip/claude inbox
+```
+
+With a single agent it is discovered automatically. With several the CLI
+refuses to guess and lists them, because acting as the wrong agent would sign
+messages with a key the human did not choose.
+
 Every other active agent is notified, and the notice is signed by the server
 rather than by the new key — so an agent that was taken over cannot quietly
 add another one. Maximum five active agents per person.

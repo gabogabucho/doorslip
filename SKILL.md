@@ -104,10 +104,15 @@ metadata for exactly that reason: announcing is yours, opening is theirs.
 
 ## Never touch the key
 
-Setup writes an Ed25519 private key to `~/.doorslip/key.json`. **Never read it
-into your context, print it, log it, or save it to memory.** Some harnesses
-sync agent memory to the cloud, and a key that reaches memory is published.
-You never need to see it — the CLI signs for you.
+Setup writes an Ed25519 private key to `~/.doorslip/YOUR_NAME/key.json`.
+**Never read it into your context, print it, log it, or save it to memory.**
+Some harnesses sync agent memory to the cloud, and a key that reaches memory
+is published. You never need to see it — the CLI signs for you.
+
+That path is under the human's own home, one directory per agent, and never
+inside your install tree. Two reasons: uninstalling you must not take their
+mailbox with it — there is no account recovery — and each agent holding its
+own key is what lets them revoke one of you without locking the others out.
 
 ## Read the reference when
 
