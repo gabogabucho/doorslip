@@ -3,6 +3,11 @@
 # Provision a Doorslip server on a fresh Ubuntu 24.04 box.
 #
 #   sudo ./install.sh 1-2-3-4.sslip.io
+#   sudo ./install.sh 1-2-3-4.sslip.io /tmp/doorslip-0.1.0-py3-none-any.whl
+#
+# The second argument installs a local wheel instead of pulling from PyPI.
+# Use it to try a build before publishing: a PyPI version can never be
+# replaced, so a release with a bug burns that version number for good.
 #
 # Idempotent: safe to re-run after changing the host or upgrading the package.
 # It never touches /var/lib/doorslip/doorslip.db, so re-running does not lose
@@ -11,8 +16,9 @@
 set -euo pipefail
 
 HOST="${1:-}"
+LOCAL_WHEEL="${2:-}"
 if [[ -z "$HOST" ]]; then
-	echo "usage: $0 <hostname>   e.g. $0 1-2-3-4.sslip.io" >&2
+	echo "usage: $0 <hostname> [local-wheel]   e.g. $0 1-2-3-4.sslip.io" >&2
 	exit 1
 fi
 
@@ -41,10 +47,15 @@ id -u doorslip &>/dev/null || useradd --system --no-create-home --shell /usr/sbi
 install -d -o doorslip -g doorslip -m 750 "$DATA_DIR"
 install -d -m 755 "$APP_DIR"
 
-echo "==> installing doorslip from PyPI"
 python3 -m venv "$APP_DIR/venv" 2>/dev/null || true
 "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
-"$APP_DIR/venv/bin/pip" install --quiet --upgrade doorslip
+if [[ -n "$LOCAL_WHEEL" ]]; then
+	echo "==> installing doorslip from $LOCAL_WHEEL"
+	"$APP_DIR/venv/bin/pip" install --quiet --upgrade --force-reinstall "$LOCAL_WHEEL"
+else
+	echo "==> installing doorslip from PyPI"
+	"$APP_DIR/venv/bin/pip" install --quiet --upgrade doorslip
+fi
 
 echo "==> writing the service unit"
 sed "s/DOORSLIP_HOST/$HOST/g" "$(dirname "$0")/doorslip.service" \
