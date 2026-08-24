@@ -363,3 +363,93 @@ def test_metrics_count_turns_by_speaker_change_not_by_message(gabo, tomas, http)
 
     assert threads["messages_total"] == 2
     assert threads["average_turns_per_thread"] == 1.0
+
+
+# -- enrolling a second agent for the same person (spec §7.3) -------------
+
+
+def _enrol(http, mailbox_owner, label):
+    """Attach a brand-new key to an existing mailbox, as a second agent would."""
+    code = mailbox_owner.enroll_code()
+    joiner = Agent(http, handle="", label=label, keypair=generate_keypair())
+    result = joiner.register(enroll_code=code)
+    joiner.handle = result["handle"]
+    return joiner, result
+
+
+def test_a_second_agent_joins_the_same_mailbox(gabo, tomas, http):
+    """Five agents, one inbox, one address book — the mailbox is the human's."""
+    _introduce(gabo, tomas)
+    gabo.send(to=tomas.handle, state={"topic": "barbecue"}, prose="Saturday?")
+
+    claude, result = _enrol(http, tomas, "claude")
+
+    assert result["handle"] == tomas.handle
+    assert sorted(result["active_agents"]) == ["claude", "claude"]
+    assert gabo.handle in claude.contacts()
+    assert any(m["from"] == gabo.handle for m in claude.inbox())
+
+
+def test_enrolling_notifies_the_mailbox_and_the_notice_is_not_signed_by_the_new_key(
+    gabo, http
+):
+    """Spec §7.3. A compromised agent that could sign its own announcement
+    would control the warning too, so the server signs it instead.
+    """
+    claude, _ = _enrol(http, gabo, "claude")
+
+    notice = [m for m in gabo.inbox() if m["from"] == WELCOME]
+    assert len(notice) == 1
+    assert notice[0]["envelope"]["from"]["pubkey"] != claude.pubkey
+    assert "claude" in notice[0]["envelope"]["prose"]
+
+
+def test_an_enrolment_code_is_single_use(gabo, http):
+    code = gabo.enroll_code()
+    first = Agent(http, handle="", label="claude", keypair=generate_keypair())
+    first.register(enroll_code=code)
+
+    second = Agent(http, handle="", label="codex", keypair=generate_keypair())
+    with pytest.raises(ProtocolError) as caught:
+        second.register(enroll_code=code)
+
+    assert caught.value.status == 400
+
+
+def test_an_invitation_code_is_refused_by_register(gabo, http):
+    """The mistake this prefix split exists to catch.
+
+    Redeeming an invitation here would enrol another human as your own agent,
+    handing them your inbox and the ability to sign as you.
+    """
+    joiner = Agent(http, handle="x@doorslip.test", label="claude", keypair=generate_keypair())
+
+    with pytest.raises(ProtocolError) as caught:
+        joiner.register(enroll_code=gabo.invite())
+
+    assert caught.value.status == 400
+
+
+def test_a_mailbox_stops_at_five_active_agents(gabo, http):
+    """Hardcoded in spec §4. Not a setting: a limit you can raise by editing a
+    config file is not a limit.
+    """
+    for label in ("two", "three", "four", "five"):
+        _enrol(http, gabo, label)
+
+    with pytest.raises(ProtocolError) as caught:
+        gabo.enroll_code()
+
+    assert caught.value.status == 409
+
+
+def test_a_revoked_agent_frees_a_slot(gabo, http):
+    for label in ("two", "three", "four", "five"):
+        _enrol(http, gabo, label)
+    extra = [m for m in gabo.inbox()]
+    assert extra  # notices arrived
+
+    http.post("/revoke-key", json={"pubkey": gabo.pubkey}, headers=gabo._auth_headers())
+
+    # Gabo's own key is gone, but the mailbox now has a free slot again.
+    assert http.get("/nonce", params={"pubkey": gabo.pubkey}).status_code == 200

@@ -180,26 +180,3 @@ def test_malformed_registration_bodies_are_refused(client, body):
     )
 
     assert response.status_code == 400
-
-
-def test_enrolling_an_extra_agent_is_not_implemented_yet(client):
-    """Spec §7.3. Out of this slice: the done-criterion needs two agents
-    belonging to different people, not several keys for one human.
-    """
-    keypair = generate_keypair()
-    nonce = client.get("/nonce", params={"pubkey": keypair.public_key}).json()["nonce"]
-    raw = json.dumps(
-        {
-            "handle": "gabo@doorslip.test",
-            "pubkey": keypair.public_key,
-            "label": "claude",
-            "nonce": nonce,
-            "enroll_code": "ds_enr_whatever",
-        }
-    ).encode("utf-8")
-
-    response = client.post(
-        "/register", content=raw, headers={SIGNATURE_HEADER: sign(raw, keypair.private_key)}
-    )
-
-    assert response.status_code == 501

@@ -127,16 +127,31 @@ class Agent:
 
     # -- identity ---------------------------------------------------------
 
-    def register(self) -> dict[str, Any]:
-        return self._signed_post(
-            "/register",
-            {
-                "handle": self.handle,
-                "pubkey": self.pubkey,
-                "label": self.label,
-                "nonce": self._nonce(),
-            },
-        )
+    def register(self, enroll_code: str | None = None) -> dict[str, Any]:
+        """Register this key.
+
+        Without a code this claims a new handle. With one it attaches this key
+        to a mailbox that already exists, and the handle comes from the code —
+        which is why it is not sent.
+        """
+        payload: dict[str, Any] = {
+            "pubkey": self.pubkey,
+            "label": self.label,
+            "nonce": self._nonce(),
+        }
+        if enroll_code:
+            payload["enroll_code"] = enroll_code
+        else:
+            payload["handle"] = self.handle
+        return self._signed_post("/register", payload)
+
+    def enroll_code(self) -> str:
+        """Mint a code so another agent can join THIS mailbox (spec §7.3).
+
+        Twenty minutes, single use. It grants everything this identity has, so
+        hand it over directly and never through a channel you do not control.
+        """
+        return _unwrap(self._http.post("/enroll-code", headers=self._auth_headers()))["code"]
 
     # -- address book -----------------------------------------------------
 

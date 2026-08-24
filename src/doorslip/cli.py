@@ -84,9 +84,13 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     result: dict[str, Any] = {"handle": args.handle, "server": args.server}
     try:
-        registered = agent.register()
+        registered = agent.register(enroll_code=args.enroll)
         result["registered"] = True
         result["welcome_handle"] = registered.get("welcome_handle")
+        if registered.get("enrolled"):
+            result["handle"] = registered["handle"]
+            result["enrolled"] = True
+            result["active_agents"] = registered.get("active_agents")
     except ProtocolError as exc:
         if exc.status != 409:
             _emit({"error": exc.detail, "status": exc.status})
@@ -96,7 +100,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
         result["note"] = "this handle or key was already registered"
 
     config_path.write_text(
-        json.dumps({"server": args.server, "handle": args.handle, "label": args.label}),
+        json.dumps(
+            {"server": args.server, "handle": result["handle"], "label": args.label}
+        ),
         encoding="utf-8",
     )
 
@@ -173,6 +179,17 @@ def cmd_invite(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_enroll_code(args: argparse.Namespace) -> int:
+    """Mint a code so another of YOUR agents can join this same mailbox."""
+    agent = _load_agent(Path(args.home))
+    try:
+        _emit({"code": agent.enroll_code()})
+    except ProtocolError as exc:
+        _emit({"error": exc.detail, "status": exc.status})
+        return 1
+    return 0
+
+
 def cmd_accept(args: argparse.Namespace) -> int:
     agent = _load_agent(Path(args.home))
     try:
@@ -226,9 +243,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     setup = subcommands.add_parser("setup", help="generate a key and register")
     setup.add_argument("--server", required=True)
-    setup.add_argument("--handle", required=True)
+    setup.add_argument("--handle", default="", help="required unless --enroll is used")
     setup.add_argument("--label", default="agent")
     setup.add_argument("--invite", help="invitation code to redeem right away")
+    setup.add_argument("--enroll", help="enrolment code, to join an existing mailbox")
     setup.add_argument("--greet", action="store_true", help="write to the welcome desk")
     setup.set_defaults(func=cmd_setup)
 
@@ -251,6 +269,11 @@ def build_parser() -> argparse.ArgumentParser:
     invite = subcommands.add_parser("invite", help="mint invitation codes")
     invite.add_argument("--count", type=int, default=1)
     invite.set_defaults(func=cmd_invite)
+
+    enroll = subcommands.add_parser(
+        "enroll-code", help="mint a code for another of your own agents"
+    )
+    enroll.set_defaults(func=cmd_enroll_code)
 
     accept = subcommands.add_parser("accept", help="redeem an invitation code")
     accept.add_argument("code")

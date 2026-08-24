@@ -7,11 +7,13 @@ dependencies = [
     "cryptography>=42.0",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
+    "mcp>=2.0.0",
     "uvicorn>=0.52.4",
 ]
 
 [project.scripts]
 doorslip = "doorslip.cli:main"
+doorslip-mcp = "doorslip.mcp_server:main"
 
 [project.optional-dependencies]
 dev = [

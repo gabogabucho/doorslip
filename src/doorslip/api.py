@@ -25,11 +25,14 @@ from doorslip.envelope import EnvelopeError, parse
 from doorslip.identity import Rejection, VerifiedSender, verify_sender
 from doorslip.store import (
     ENROLL_PREFIX,
+    INVITE_PREFIX,
+    MAX_AGENTS_PER_HUMAN,
     HandleTaken,
     Human,
     InviteInvalid,
     KeyAlreadyRegistered,
     Store,
+    TooManyAgents,
 )
 from doorslip.welcome import WELCOME_LABEL, WelcomeAgent
 
@@ -97,18 +100,14 @@ def create_app(store: Store, *, welcome_handle: str = DEFAULT_WELCOME_HANDLE) ->
 
         try:
             body = _decode_body(raw)
-            handle = _required(body, "handle")
             pubkey = _required(body, "pubkey")
             label = _required(body, "label")
             nonce = _required(body, "nonce")
+            enrolling = "enroll_code" in body
+            code = _required(body, "enroll_code") if enrolling else None
+            handle = None if enrolling else _required(body, "handle")
         except ValueError as exc:
             return _error(400, str(exc))
-
-        if "enroll_code" in body:
-            # Spec §7.3. Not in this slice: enrolling extra keys for one human
-            # is not exercised by the done-criterion, which needs two agents
-            # belonging to *different* people.
-            return _error(501, "enrolling additional agents is not implemented yet")
 
         # Signature first, nonce second. A bad signature must not burn a valid
         # nonce — otherwise anyone who can observe a request can grief the
@@ -119,6 +118,35 @@ def create_app(store: Store, *, welcome_handle: str = DEFAULT_WELCOME_HANDLE) ->
         if not store.consume_nonce(nonce, pubkey):
             return _error(401, "nonce is unknown, expired, already used, or another key's")
 
+        if enrolling:
+            assert code is not None
+            if code.startswith(INVITE_PREFIX):
+                # The prefixes exist so this is catchable. Redeeming an
+                # invitation here would enrol another human as your own agent.
+                return _error(400, "that is an invitation code, not an enrolment code")
+            try:
+                human = store.redeem_enroll_code(code, pubkey=pubkey, label=label)
+            except TooManyAgents as exc:
+                return _error(409, str(exc))
+            except KeyAlreadyRegistered:
+                return _error(409, "pubkey already registered")
+            except InviteInvalid as exc:
+                return _error(400, str(exc))
+
+            _notify_enrolment(store, welcome, human, label)
+            return JSONResponse(
+                {
+                    "handle": human.handle,
+                    "human_id": human.id,
+                    "agent_label": label,
+                    "welcome_handle": welcome.handle,
+                    "enrolled": True,
+                    "active_agents": store.active_agent_labels(human.id),
+                },
+                status_code=201,
+            )
+
+        assert handle is not None
         try:
             human = store.register_identity(handle=handle, pubkey=pubkey, label=label)
         except HandleTaken:
@@ -137,9 +165,19 @@ def create_app(store: Store, *, welcome_handle: str = DEFAULT_WELCOME_HANDLE) ->
         )
 
     @app.post("/enroll-code")
-    def enroll_code() -> Response:
-        """Spec §7.3. Last in the build order — see POST /register."""
-        return _error(501, "enrolment codes are not implemented yet")
+    def enroll_code(request: Request) -> Response:
+        """Mint a code to attach another agent to your own identity (spec §7.3).
+
+        Any active key may enrol, and any may revoke. No hierarchy on purpose:
+        once an agent is compromised the damage is already total, so
+        restricting who may enrol buys nothing real and adds edge cases.
+        """
+        caller = authenticate(request)
+        if isinstance(caller, Response):
+            return caller
+        if store.count_active_agents(caller.id) >= MAX_AGENTS_PER_HUMAN:
+            return _error(409, f"already at {MAX_AGENTS_PER_HUMAN} active agents")
+        return JSONResponse({"code": store.create_enroll_code(caller.id)}, status_code=201)
 
     @app.post("/revoke-key")
     async def revoke_key(request: Request) -> Response:
@@ -363,6 +401,33 @@ def _welcome_reply(
         from_human_id=welcome.human_id,
         from_agent_id=agent_id,
         to_human_id=sender_human_id,
+    )
+
+
+def _notify_enrolment(
+    store: Store, welcome: WelcomeAgent, human: Human, new_label: str
+) -> None:
+    """Tell every active key that another one was just added (spec §7.3).
+
+    The notice is signed by the SERVER's own identity, never by the key that
+    made the change. If the compromised agent signed its own announcement it
+    would control the warning too, and the alert would be worth nothing.
+
+    One message reaches every agent of this person because they share a single
+    inbox — which is the same property that makes the address book shared.
+    """
+    raw, signature = welcome.notify_enrolment(human.handle, new_label)
+    agent_id = store.agent_id_for(welcome.keypair.public_key)
+    if agent_id is None:
+        return
+    store.add_contact_pair(welcome.human_id, human.id)
+    store.store_message(
+        envelope=parse(raw),
+        raw=raw,
+        signature=signature,
+        from_human_id=welcome.human_id,
+        from_agent_id=agent_id,
+        to_human_id=human.id,
     )
 
 

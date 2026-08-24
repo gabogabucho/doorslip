@@ -85,3 +85,37 @@ class WelcomeAgent:
         )
         sealed = seal(raw, self.keypair.private_key)
         return sealed.raw, sealed.signature
+
+    def notify_enrolment(self, handle: str, new_label: str) -> tuple[bytes, str]:
+        """Announce that another key was attached to an identity (spec §7.3).
+
+        Signed by this desk — the server's own identity — and never by the key
+        that requested the change. A compromised agent that could sign its own
+        announcement would control the warning as well, and an alert the
+        attacker writes is not an alert.
+        """
+        state = {
+            "topic": "a new agent key was added to your mailbox",
+            "status": "confirmed",
+            "who": [handle],
+            "constraints": [f"new agent label: {new_label}"],
+            "tasks": [{"what": "revoke it if this was not you", "who": handle}],
+        }
+        raw = build(
+            sender_handle=self.handle,
+            sender_agent=WELCOME_LABEL,
+            sender_pubkey=self.keypair.public_key,
+            to=handle,
+            state=state,
+            prose=(
+                f"An agent labelled '{new_label}' was just enrolled on this mailbox "
+                "using a valid enrolment code. It can now read this inbox, see the "
+                "address book and sign as you.\n\n"
+                "This notice is signed by the server, not by the key that made the "
+                "change, so an agent that was taken over cannot suppress or forge "
+                "it.\n\n"
+                "If you did not do this, revoke that key now."
+            ),
+        )
+        sealed = seal(raw, self.keypair.private_key)
+        return sealed.raw, sealed.signature

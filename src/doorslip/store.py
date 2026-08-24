@@ -47,6 +47,11 @@ NONCE_TTL_SECONDS = 60
 # an email — and the person on the other side may take a day to paste it.
 INVITE_TTL_DAYS = 7
 
+# Spec §7.3. Much shorter than an invitation because it grants far more: an
+# enrolment code hands over the inbox, the address book and the ability to sign
+# as that person. It must not survive being pasted into the wrong window.
+ENROLL_TTL_MINUTES = 20
+
 INVITE_PREFIX = "ds_inv_"
 ENROLL_PREFIX = "ds_enr_"
 
@@ -115,6 +120,14 @@ CREATE TABLE IF NOT EXISTS invite_code (
     redeemed_at          TEXT,
     redeemed_by_human_id TEXT REFERENCES human(id),
     created_at           TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS enroll_code (
+    code        TEXT PRIMARY KEY,
+    human_id    TEXT NOT NULL REFERENCES human(id),
+    expires_at  TEXT NOT NULL,
+    redeemed_at TEXT,
+    created_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS event_log (
@@ -294,6 +307,74 @@ class Store:
         if changed:
             self.log("revoke", pubkey=pubkey)
         return changed == 1
+
+    def create_enroll_code(self, human_id: str) -> str:
+        """Mint a code that attaches ANOTHER KEY TO THIS SAME IDENTITY (spec §7.3).
+
+        Twenty minutes, single use, and a prefix that cannot be mistaken for an
+        invitation. The short life is the mitigation that matters: this code
+        grants everything — inbox, address book, the ability to sign as this
+        person — so it must not survive being pasted into the wrong window.
+        """
+        code = ENROLL_PREFIX + secrets.token_urlsafe(18)
+        with self._db:
+            self._db.execute(
+                "INSERT INTO enroll_code (code, human_id, expires_at, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (
+                    code,
+                    human_id,
+                    (_now() + timedelta(minutes=ENROLL_TTL_MINUTES)).isoformat(),
+                    _now_text(),
+                ),
+            )
+        self.log("enroll_code", human_id=human_id)
+        return code
+
+    def redeem_enroll_code(self, code: str, *, pubkey: str, label: str) -> Human:
+        """Attach a new agent key to the identity that issued the code."""
+        if not code.startswith(ENROLL_PREFIX):
+            raise InviteInvalid("not an enrolment code")
+        if self.find_agent(pubkey) is not None:
+            raise KeyAlreadyRegistered(pubkey)
+
+        row = self._db.execute(
+            "SELECT human_id FROM enroll_code"
+            " WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?",
+            (code, _now_text()),
+        ).fetchone()
+        if row is None:
+            raise InviteInvalid("unknown, expired or already redeemed")
+
+        human_id = row[0]
+        if self.count_active_agents(human_id) >= MAX_AGENTS_PER_HUMAN:
+            raise TooManyAgents(f"already at {MAX_AGENTS_PER_HUMAN} active agents")
+
+        moment = _now_text()
+        with self._db:
+            self._db.execute(
+                "UPDATE enroll_code SET redeemed_at = ? WHERE code = ? AND redeemed_at IS NULL",
+                (moment, code),
+            )
+            self._db.execute(
+                "INSERT INTO agent (id, human_id, label, pubkey, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), human_id, label, pubkey, moment),
+            )
+        self.log("enroll", pubkey=pubkey, human_id=human_id, detail=label)
+        human = self.human_by_id(human_id)
+        assert human is not None  # FK guarantees it
+        return human
+
+    def active_agent_labels(self, human_id: str) -> list[str]:
+        return [
+            row[0]
+            for row in self._db.execute(
+                "SELECT label FROM agent WHERE human_id = ? AND revoked_at IS NULL"
+                " ORDER BY created_at",
+                (human_id,),
+            ).fetchall()
+        ]
 
     # -- nonces -----------------------------------------------------------
 
