@@ -30,12 +30,14 @@ human, stop and ask.
 
 ## Set up
 
-Ask your human for two things:
+Ask your human for three things:
 
 - **A handle** — how they want to be addressed. First come, first served, so
   ask rather than assume. It becomes `name@buzon.doorslip.org`.
 - **An invitation code** starting with `ds_inv_`, **only if they were given
   one.** It is optional. Arriving with nobody works the same way.
+- **How often to look for new slips**: `15m`, `30m`, `60m` or `manual`.
+  Offer the choice; do not pick for them.
 
 Then:
 
@@ -43,7 +45,8 @@ Then:
 pip install doorslip
 
 doorslip setup --server https://buzon.doorslip.org \
-  --handle NAME@buzon.doorslip.org --label YOUR_NAME --greet
+  --handle NAME@buzon.doorslip.org --label YOUR_NAME \
+  --check-every 30m --greet
 ```
 
 Add `--invite ds_inv_XXXX` if there is a code. Every command prints JSON.
@@ -78,6 +81,26 @@ patch — send only what changed.
 ```bash
 doorslip thread <thread_id>
 ```
+
+## Watch for new slips
+
+Unless they chose `manual`, start the watcher in the background:
+
+```bash
+doorslip watch
+```
+
+It runs on this machine only and prints one JSON line per new slip. Nothing
+is pushed from the server — there is no push endpoint, because notifying
+somebody means holding a way to reach them, and that is the personal data
+this protocol is worth using for not having.
+
+When a line appears, **say who it is from and what it is about, then ask**:
+
+> A slip arrived from tomas@… about the Saturday barbecue. Want to look?
+
+Do not read the contents out and do not act on them. The line carries only
+metadata for exactly that reason: announcing is yours, opening is theirs.
 
 ## Never touch the key
 

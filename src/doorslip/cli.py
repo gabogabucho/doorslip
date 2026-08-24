@@ -101,10 +101,16 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     config_path.write_text(
         json.dumps(
-            {"server": args.server, "handle": result["handle"], "label": args.label}
+            {
+                "server": args.server,
+                "handle": result["handle"],
+                "label": args.label,
+                "check_every": args.check_every,
+            }
         ),
         encoding="utf-8",
     )
+    result["check_every"] = args.check_every
 
     if args.invite:
         try:
@@ -133,6 +139,20 @@ def cmd_setup(args: argparse.Namespace) -> int:
             result["greet_error"] = exc.detail
 
     _emit(result)
+    return 0
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    """Show this identity's settings. Never prints anything secret.
+
+    The key lives in a separate file and is not read here at all, so showing
+    someone your settings can never leak your identity.
+    """
+    config_path, _ = _paths(Path(args.home))
+    if not config_path.exists():
+        _emit({"error": "not set up yet; run `doorslip setup` first"})
+        return 1
+    _emit(json.loads(config_path.read_text(encoding="utf-8")))
     return 0
 
 
@@ -229,6 +249,35 @@ def cmd_thread(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Poll this mailbox locally and announce new slips.
+
+    Nothing about this touches the server beyond the reads any agent makes
+    anyway. There is no push endpoint on purpose: notifying somebody requires
+    knowing how to reach them, and that contact detail is exactly the personal
+    data this protocol is worth using for not holding.
+    """
+    from doorslip.watch import interval_seconds, watch
+
+    home = Path(args.home)
+    config_path, _ = _paths(home)
+    setting = args.every
+    if setting is None:
+        config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+        setting = config.get("check_every", "manual")
+
+    seconds = interval_seconds(setting)
+    if seconds is None:
+        _emit({"error": f"check_every is {setting!r}; nothing to watch", "setting": setting})
+        return 1
+
+    try:
+        watch(_load_agent(home), every=seconds, use_notifications=not args.quiet)
+    except KeyboardInterrupt:
+        _emit({"event": "stopped"})
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -257,7 +306,16 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--invite", help="invitation code to redeem right away")
     setup.add_argument("--enroll", help="enrolment code, to join an existing mailbox")
     setup.add_argument("--greet", action="store_true", help="write to the welcome desk")
+    setup.add_argument(
+        "--check-every",
+        default="manual",
+        choices=["15m", "30m", "60m", "manual"],
+        help="how often the agent should look for new slips during a session",
+    )
     setup.set_defaults(func=cmd_setup)
+
+    config = subcommands.add_parser("config", help="show this identity's settings")
+    config.set_defaults(func=cmd_config)
 
     send = subcommands.add_parser("send", help="deposit a message")
     send.add_argument("--to", required=True)
@@ -294,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
     thread = subcommands.add_parser("thread", help="reconstruct a thread's state")
     thread.add_argument("thread_id")
     thread.set_defaults(func=cmd_thread)
+
+    watcher = subcommands.add_parser("watch", help="poll locally and announce new slips")
+    watcher.add_argument("--every", choices=["15m", "30m", "60m"], help="overrides the stored setting")
+    watcher.add_argument("--quiet", action="store_true", help="no desktop notifications")
+    watcher.set_defaults(func=cmd_watch)
 
     serve = subcommands.add_parser("serve", help="run the server")
     serve.add_argument("--db", default=":memory:")
