@@ -60,6 +60,7 @@ def build(
     prose: str,
     thread_id: str | None = None,
     parent_message_id: str | None = None,
+    resolves: list[str] | None = None,
     message_id: str | None = None,
     disclosure: str = "basic",
     timestamp: datetime | None = None,
@@ -75,6 +76,11 @@ def build(
             "a message with a parent belongs to an existing thread; "
             "thread_id is missing"
         )
+    if resolves and parent_message_id is None:
+        raise EnvelopeError(
+            "a message resolving a divergence belongs inside the thread that "
+            "diverged; it needs a parent"
+        )
     if disclosure not in _DISCLOSURE:
         raise EnvelopeError(f"invalid disclosure: {disclosure!r}")
     if len(prose) > MAX_PROSE_CHARS:
@@ -87,6 +93,7 @@ def build(
         "message_id": message_id or str(uuid.uuid4()),
         "thread_id": thread_id or str(uuid.uuid4()),
         "parent_message_id": parent_message_id,
+        "resolves": list(resolves) if resolves else None,
         "from": {
             "handle": sender_handle,
             "agent": sender_agent,

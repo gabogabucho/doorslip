@@ -241,6 +241,7 @@ def cmd_send(args: argparse.Namespace) -> int:
                 prose=args.prose,
                 thread_id=args.thread,
                 parent_message_id=args.parent,
+                resolves=args.resolves or None,
             )
         )
     except ProtocolError as exc:
@@ -335,9 +336,14 @@ def cmd_thread(args: argparse.Namespace) -> int:
         "patches_applied": len(result.applied),
         "diverged": result.diverged,
     }
-    if result.diverged:
+    if result.divergences:
         payload["divergences"] = [
-            {"parent": d.parent_id, "messages": d.message_ids} for d in result.divergences
+            {
+                "parent": d.parent_id,
+                "messages": d.message_ids,
+                "resolved_by": d.resolved_by,
+            }
+            for d in result.divergences
         ]
     if args.messages:
         payload["messages"] = agent.thread_messages(args.thread_id)
@@ -488,6 +494,12 @@ def build_parser() -> argparse.ArgumentParser:
     send.add_argument("--state", help="JSON object; a merge patch when replying")
     send.add_argument("--thread")
     send.add_argument("--parent")
+    send.add_argument(
+        "--resolves",
+        nargs="+",
+        metavar="MESSAGE_ID",
+        help="message ids this supersedes, after a human settled a divergence",
+    )
     send.set_defaults(func=cmd_send)
 
     inbox = subcommands.add_parser("inbox", help="read your messages")

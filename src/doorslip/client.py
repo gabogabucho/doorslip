@@ -208,6 +208,7 @@ class Agent:
         prose: str,
         thread_id: str | None = None,
         parent_message_id: str | None = None,
+        resolves: list[str] | None = None,
     ) -> dict[str, str]:
         """Build, sign and deposit one message.
 
@@ -223,6 +224,7 @@ class Agent:
             prose=prose,
             thread_id=thread_id,
             parent_message_id=parent_message_id,
+            resolves=resolves,
         )
         sealed = seal(raw, self._keypair.private_key)
         _unwrap(

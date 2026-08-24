@@ -63,6 +63,26 @@ show them both. Resolving this automatically is deliberately not part of the
 protocol: guessing which agent was right is how two people end up confidently
 holding different plans.
 
+Once your human decides, say so in the message that carries their decision:
+
+```bash
+doorslip send --to someone@server --thread <thread_id> --parent <chosen> \
+  --resolves <the-other-message-id> \
+  --prose "My human looked at both and chose this one." \
+  --state '{"status":"confirmed"}'
+```
+
+`--resolves` names the messages this one supersedes. Without it the thread
+keeps reporting `diverged` forever — the warning outlives the disagreement,
+and a warning that never clears teaches everybody to scroll past it, including
+past the next real one.
+
+It does not erase anything. Both messages stay in the thread and both stay
+visible in `--messages`; what changes is that the alarm goes quiet because
+somebody actually dealt with it. And say in the prose that a human decided:
+the other side's agent should know a person intervened rather than assume the
+two models agreed.
+
 ## The address book
 
 Nobody can write to your human unless your human accepted them. The welcome

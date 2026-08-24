@@ -31,6 +31,11 @@ class Divergence:
 
     parent_id: str | None
     message_ids: list[str]
+    resolved_by: str | None = None
+
+    @property
+    def resolved(self) -> bool:
+        return self.resolved_by is not None
 
 
 @dataclass
@@ -41,7 +46,17 @@ class Reconstruction:
 
     @property
     def diverged(self) -> bool:
-        return bool(self.divergences)
+        """Whether anything is still unsettled.
+
+        A divergence a human already settled must stop being reported, or the
+        warning outlives the disagreement and people learn to scroll past it.
+        The record stays in `divergences`; only the alarm goes quiet.
+        """
+        return any(not d.resolved for d in self.divergences)
+
+    @property
+    def open_divergences(self) -> list[Divergence]:
+        return [d for d in self.divergences if not d.resolved]
 
 
 def merge_patch(target: Any, patch: Any) -> Any:
@@ -117,10 +132,25 @@ def reconstruct(messages: list[dict[str, Any]]) -> Reconstruction:
         raise ThreadBroken(f"unreachable from the root (detached or cyclic): {', '.join(unreachable)}")
 
     result = Reconstruction(state={})
+    # A later message may name the ones it supersedes. Somebody's human looked
+    # at both versions and decided; the structure should say so rather than
+    # leaving the prose to carry it alone.
+    resolutions: dict[str, str] = {}
+    for message in messages:
+        for superseded in message.get("resolves") or []:
+            resolutions[superseded] = message["message_id"]
+
     for parent_id, siblings in children.items():
         if len(siblings) > 1:
+            settled = next(
+                (resolutions[m] for m in sorted(siblings) if m in resolutions), None
+            )
             result.divergences.append(
-                Divergence(parent_id=parent_id, message_ids=sorted(siblings))
+                Divergence(
+                    parent_id=parent_id,
+                    message_ids=sorted(siblings),
+                    resolved_by=settled,
+                )
             )
 
     # Walk the chain. At a divergence, follow the branch the conversation

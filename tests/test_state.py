@@ -200,3 +200,74 @@ def test_a_long_thread_does_not_exhaust_the_stack():
 
     assert len(result.applied) == 2000
     assert result.state["n"] == 1999
+
+
+# -- a divergence somebody settled ----------------------------------------
+
+
+def _resolving(message_id, parent, state, resolves):
+    message = _message(message_id, parent, state)
+    message["resolves"] = resolves
+    return message
+
+
+def test_a_settled_divergence_stops_being_reported():
+    """A warning that outlives the disagreement teaches people to scroll past
+    it, and then the real one goes unread too.
+    """
+    messages = [
+        _message("a", None, {"topic": "landing"}),
+        _message("b", "a", {"where": "park"}),
+        _message("c", "a", {"where": "my place"}),
+        _resolving("d", "c", {"status": "done"}, ["b"]),
+    ]
+
+    result = reconstruct(messages)
+
+    assert not result.diverged
+    assert result.open_divergences == []
+    assert result.divergences[0].resolved_by == "d"
+
+
+def test_the_record_of_the_disagreement_stays():
+    """Quieting the alarm is not erasing the history. Somebody reading the
+    thread later should still see the two sides existed.
+    """
+    messages = [
+        _message("a", None, {"topic": "x"}),
+        _message("b", "a", {"where": "park"}),
+        _message("c", "a", {"where": "my place"}),
+        _resolving("d", "c", {}, ["b"]),
+    ]
+
+    result = reconstruct(messages)
+
+    assert result.divergences[0].message_ids == ["b", "c"]
+    assert result.divergences[0].resolved
+
+
+def test_an_unsettled_divergence_is_still_reported():
+    messages = [
+        _message("a", None, {"topic": "x"}),
+        _message("b", "a", {"where": "park"}),
+        _message("c", "a", {"where": "my place"}),
+    ]
+
+    assert reconstruct(messages).diverged
+
+
+def test_settling_one_divergence_does_not_quiet_another():
+    messages = [
+        _message("a", None, {"topic": "x"}),
+        _message("b", "a", {"n": 1}),
+        _message("c", "a", {"n": 2}),
+        _resolving("d", "c", {}, ["b"]),
+        _message("e", "d", {"m": 1}),
+        _message("f", "d", {"m": 2}),
+    ]
+
+    result = reconstruct(messages)
+
+    assert result.diverged
+    assert len(result.open_divergences) == 1
+    assert result.open_divergences[0].parent_id == "d"
