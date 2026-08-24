@@ -39,7 +39,7 @@ render() {
 echo "==> installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq python3-venv curl debian-keyring debian-archive-keyring apt-transport-https
+apt-get install -y -qq python3-venv curl sqlite3 cron debian-keyring debian-archive-keyring apt-transport-https
 
 if ! command -v caddy >/dev/null; then
 	echo "==> installing Caddy"
@@ -99,6 +99,18 @@ if [[ -f "$HERE/REFERENCE.md" ]]; then
 fi
 
 chmod 644 "$WEB_DIR"/* 2>/dev/null || true
+
+echo "==> scheduling backups"
+# Nightly, before anybody is awake to notice the disk churn. There is no
+# identity recovery in this protocol, so a lost directory is not something the
+# people using it could rebuild for themselves.
+if [[ -f "$HERE/backup.sh" ]]; then
+	install -m 700 "$HERE/backup.sh" /usr/local/sbin/doorslip-backup
+	printf '17 4 * * * root /usr/local/sbin/doorslip-backup >/var/log/doorslip-backup.log 2>&1
+' 		> /etc/cron.d/doorslip-backup
+	chmod 644 /etc/cron.d/doorslip-backup
+	/usr/local/sbin/doorslip-backup || echo "    first backup failed" >&2
+fi
 
 echo "==> writing the Caddyfile"
 render "$HERE/Caddyfile" | sed "s/DOORSLIP_HOST/$HOST/g" > /etc/caddy/Caddyfile

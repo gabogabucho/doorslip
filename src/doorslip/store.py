@@ -52,6 +52,12 @@ INVITE_TTL_DAYS = 7
 # as that person. It must not survive being pasted into the wrong window.
 ENROLL_TTL_MINUTES = 20
 
+# Spec §7.9. The ceiling that matters most now that agents can answer each
+# other unattended: a loop between two of them costs both humans money, and
+# neither is watching. Per pair rather than per sender, because the harm is
+# what one person's automation does to one other person.
+MAX_MESSAGES_PER_HOUR = 60
+
 INVITE_PREFIX = "ds_inv_"
 ENROLL_PREFIX = "ds_enr_"
 
@@ -604,6 +610,15 @@ class Store:
             )
         self.log("message", human_id=from_human_id, detail=envelope["thread_id"])
         return message_id
+
+    def messages_in_last_hour(self, from_human_id: str, to_human_id: str) -> int:
+        """How many messages went one way between these two in the last hour."""
+        since = (_now() - timedelta(hours=1)).isoformat()
+        return self._db.execute(
+            "SELECT COUNT(*) FROM message"
+            " WHERE from_human_id = ? AND to_human_id = ? AND created_at > ?",
+            (from_human_id, to_human_id, since),
+        ).fetchone()[0]
 
     def message_envelope(self, message_id: str) -> dict[str, Any] | None:
         """The parsed envelope of one message, for parent-chain checks."""

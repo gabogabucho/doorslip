@@ -30,6 +30,7 @@ from doorslip.envelope import EnvelopeError, parse
 from doorslip.identity import Rejection, VerifiedSender, verify_sender
 from doorslip.store import (
     ENROLL_PREFIX,
+    MAX_MESSAGES_PER_HOUR,
     INVITE_PREFIX,
     MAX_AGENTS_PER_HUMAN,
     HandleTaken,
@@ -352,6 +353,16 @@ def create_app(
 
         if store.message_exists(envelope["message_id"]):
             return _error(409, "duplicate message_id")
+
+        # Enforced here rather than trusted to the sender. Two agents answering
+        # each other unattended will not stop on their own, and the cost of a
+        # loop is paid in inference by both humans, neither of whom is looking.
+        if store.messages_in_last_hour(sender.id, recipient.id) >= MAX_MESSAGES_PER_HOUR:
+            return _error(
+                429,
+                f"more than {MAX_MESSAGES_PER_HOUR} messages to this person in an "
+                "hour; wait, and tell your human rather than retrying",
+            )
 
         error = _check_parent(store, envelope)
         if error is not None:
