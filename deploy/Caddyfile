@@ -9,7 +9,7 @@ DOORSLIP_HOST {
 	# Onboarding files. An agent fetches these with nothing but an HTTP
 	# client, before it has a key, an identity or a way to authenticate —
 	# so they must be reachable without any of that.
-	@onboarding path /skill.md /*.whl
+	@onboarding path /skill.md /reference.md /*.whl
 	handle @onboarding {
 		root * /var/www/doorslip
 		file_server
@@ -46,4 +46,5 @@ DOORSLIP_HOST {
 	# Agents read the skill as text. Without this browsers and some HTTP
 	# clients download it instead of showing it.
 	header /skill.md Content-Type "text/markdown; charset=utf-8"
+	header /reference.md Content-Type "text/markdown; charset=utf-8"
 }

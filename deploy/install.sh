@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Provision a Doorslip server on a fresh Ubuntu 24.04 box.
+# Provision a Doorslip server on a fresh Ubuntu box.
 #
-#   sudo ./install.sh 1-2-3-4.sslip.io
-#   sudo ./install.sh 1-2-3-4.sslip.io /tmp/doorslip-0.1.0-py3-none-any.whl
+#   sudo ./install.sh buzon.example.com
+#   sudo ./install.sh buzon.example.com /tmp/doorslip-0.1.0-py3-none-any.whl
 #
 # The second argument installs a local wheel instead of pulling from PyPI.
 # Use it to try a build before publishing: a PyPI version can never be
@@ -18,12 +18,23 @@ set -euo pipefail
 HOST="${1:-}"
 LOCAL_WHEEL="${2:-}"
 if [[ -z "$HOST" ]]; then
-	echo "usage: $0 <hostname> [local-wheel]   e.g. $0 1-2-3-4.sslip.io" >&2
+	echo "usage: $0 <hostname> [local-wheel]   e.g. $0 buzon.example.com" >&2
 	exit 1
 fi
 
+HERE="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR=/opt/doorslip
 DATA_DIR=/var/lib/doorslip
+WEB_DIR=/var/www/doorslip
+
+# Documents are authored on whatever machine the maintainer uses, so they may
+# arrive with CRLF line endings. `tr -d` strips them with no pattern escaping
+# involved: a sed expression would need a literal backslash-r, and getting
+# that wrong yields a file that looks correct while silently skipping every
+# substitution below.
+render() {
+	tr -d '\r' < "$1" | sed "s/buzon\\.doorslip\\.org/$HOST/g"
+}
 
 echo "==> installing system packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -41,8 +52,8 @@ if ! command -v caddy >/dev/null; then
 fi
 
 echo "==> creating the service account"
-# No login shell and no home: this account exists to run one process and to
-# own one database. Nothing else should be reachable through it.
+# No login shell and no home: this account exists to run one process and own
+# one database. Nothing else should be reachable through it.
 id -u doorslip &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin doorslip
 install -d -o doorslip -g doorslip -m 750 "$DATA_DIR"
 install -d -m 755 "$APP_DIR"
@@ -58,39 +69,36 @@ else
 fi
 
 echo "==> writing the service unit"
-sed "s/DOORSLIP_HOST/$HOST/g" "$(dirname "$0")/doorslip.service" \
+render "$HERE/doorslip.service" | sed "s/DOORSLIP_HOST/$HOST/g" \
 	> /etc/systemd/system/doorslip.service
 
 echo "==> publishing the onboarding files"
-# SKILL.md and a wheel, served as plain files. An arriving agent fetches these
-# before it has a key or an identity, so they must need no authentication.
-WEB_DIR=/var/www/doorslip
+# An arriving agent fetches these before it has a key, an identity, or any way
+# to authenticate. They are plain files and require none of that.
 install -d -m 755 "$WEB_DIR"
 
-SKILL_SRC="$(dirname "$0")/SKILL.md"
-if [[ -f "$SKILL_SRC" ]]; then
-	# Strip carriage returns first. The source may have been authored or
-	# copied from Windows, and a trailing  makes every anchored pattern
-	# below fail silently: the line looks identical and never matches.
-	#
-	# The published copy is concrete: an agent reading it should be able to
-	# copy a command and have it work, not fill in placeholders.
-	sed -e "s/$//" -e "s/buzon\.doorslip\.org/$HOST/g" 		"$SKILL_SRC" > "$WEB_DIR/skill.md"
-
+if [[ -f "$HERE/SKILL.md" ]]; then
+	render "$HERE/SKILL.md" > "$WEB_DIR/skill.md"
 	if [[ -n "$LOCAL_WHEEL" ]]; then
 		WHEEL_NAME="$(basename "$LOCAL_WHEEL")"
 		cp "$LOCAL_WHEEL" "$WEB_DIR/$WHEEL_NAME"
-		# Until the package is on PyPI, point installs at the wheel we serve.
-		sed -i "s|^pip install doorslip$|pip install https://$HOST/$WHEEL_NAME|" 			"$WEB_DIR/skill.md"
+		# Until the package is on PyPI, point installs at the wheel served
+		# alongside this document.
+		sed -i "s|^pip install doorslip$|pip install https://$HOST/$WHEEL_NAME|" \
+			"$WEB_DIR/skill.md"
 	fi
-	chmod 644 "$WEB_DIR"/*
 	echo "    https://$HOST/skill.md"
-else
-	echo "    no SKILL.md alongside this script; skipping" >&2
 fi
 
+if [[ -f "$HERE/REFERENCE.md" ]]; then
+	render "$HERE/REFERENCE.md" > "$WEB_DIR/reference.md"
+	echo "    https://$HOST/reference.md"
+fi
+
+chmod 644 "$WEB_DIR"/* 2>/dev/null || true
+
 echo "==> writing the Caddyfile"
-sed "s/DOORSLIP_HOST/$HOST/g" "$(dirname "$0")/Caddyfile" > /etc/caddy/Caddyfile
+render "$HERE/Caddyfile" | sed "s/DOORSLIP_HOST/$HOST/g" > /etc/caddy/Caddyfile
 
 echo "==> starting"
 systemctl daemon-reload
