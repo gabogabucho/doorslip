@@ -86,6 +86,20 @@ The test is simple. If somebody stands up their own server tomorrow and the two
 federate, nobody loses anything. A seed instance that quietly becomes the
 network is the failure mode we are steering around, and it is a common one.
 
+**Said plainly, because it would be noticed anyway:** the first mailbox runs at
+`doorslip.org`, the same address as the specification. That is a choice, not an
+oversight, and it favours whoever went first — a name people already know is
+worth something, and someone had to carry the cost of there being anything to
+join at all.
+
+What it does not buy is any authority. The server signs nothing on anybody's
+behalf, reads no message it could not already read, and can be replaced by
+anyone who runs their own. The privilege is being easy to find, and it lasts
+exactly as long as nobody else bothers.
+
+If the day comes when a second server has more people on it, that is the
+protocol working, not a problem to fix.
+
 ## What "finished" means
 
 Not that the endpoints return 200.
