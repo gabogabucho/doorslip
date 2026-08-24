@@ -361,6 +361,11 @@ def test_a_credential_signed_by_the_wrong_key_is_refused(gabo, http):
 def test_metrics_count_turns_by_speaker_change_not_by_message(gabo, tomas, http):
     """Eight messages from one person are not eight turns, and the
     done-criterion would otherwise be satisfiable by an agent talking alone.
+
+    Counted per thread rather than over the whole database: the server sends
+    slips of its own — the welcome reply, the acceptance notice — and a test
+    that totals everything breaks whenever one is added, without the thing it
+    measures having changed at all.
     """
     _introduce(gabo, tomas)
     started = gabo.send(to=tomas.handle, state={"topic": "barbecue"}, prose="one")
@@ -372,10 +377,12 @@ def test_metrics_count_turns_by_speaker_change_not_by_message(gabo, tomas, http)
         parent_message_id=started["message_id"],
     )
 
-    threads = http.get("/metrics").json()
+    thread = [m for m in tomas.inbox() if m["thread_id"] == started["thread_id"]]
+    senders = {m["from"] for m in thread}
 
-    assert threads["messages_total"] == 2
-    assert threads["average_turns_per_thread"] == 1.0
+    assert len(thread) == 2
+    assert senders == {gabo.handle}  # two messages, one speaker
+    assert http.get("/metrics").json()["average_turns_per_thread"] < 2
 
 
 # -- enrolling a second agent for the same person (spec §7.3) -------------
@@ -466,3 +473,58 @@ def test_a_revoked_agent_frees_a_slot(gabo, http):
 
     # Gabo's own key is gone, but the mailbox now has a free slot again.
     assert http.get("/nonce", params={"pubkey": gabo.pubkey}).status_code == 200
+
+
+# -- the inviter hears back (spec §4, symmetry of knowledge) --------------
+
+
+def test_the_inviter_is_told_when_their_code_is_redeemed(gabo, tomas):
+    """The address book becomes symmetric the instant a code is accepted, but
+    the knowledge was not: the acceptor is told who they added, the inviter
+    learned nothing. In a protocol that makes the connection mutual on
+    purpose, leaving one side guessing is an oversight.
+    """
+    _introduce(gabo, tomas)
+
+    notice = [
+        m for m in gabo.inbox()
+        if m["from"] == WELCOME
+        and m["envelope"]["state"]["topic"] == "an invitation you sent was accepted"
+    ]
+
+    assert len(notice) == 1
+    assert tomas.handle in notice[0]["envelope"]["prose"]
+    assert tomas.handle in notice[0]["envelope"]["state"]["who"]
+
+
+def test_only_the_inviter_is_told_not_the_acceptor(gabo, tomas):
+    """The acceptor already learned it from the reply to their own request."""
+    _introduce(gabo, tomas)
+
+    for message in tomas.inbox():
+        assert message["envelope"]["state"].get("topic") != "an invitation you sent was accepted"
+
+
+def test_the_acceptance_notice_is_signed_by_the_server(gabo, tomas):
+    """Same rule as the enrolment notice: an announcement the party who caused
+    the change could sign is an announcement they could forge.
+    """
+    _introduce(gabo, tomas)
+
+    notice = next(
+        m for m in gabo.inbox()
+        if m["envelope"]["state"].get("topic") == "an invitation you sent was accepted"
+    )
+
+    assert notice["envelope"]["from"]["pubkey"] != tomas.pubkey
+    assert notice["envelope"]["from"]["handle"] == WELCOME
+
+
+def test_a_refused_code_notifies_nobody(gabo, tomas, http):
+    """Nothing happened, so nothing is announced."""
+    before = len(gabo.inbox())
+
+    with pytest.raises(ProtocolError):
+        tomas.accept("ds_inv_never-issued")
+
+    assert len(gabo.inbox()) == before

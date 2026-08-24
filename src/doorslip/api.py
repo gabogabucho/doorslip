@@ -14,13 +14,16 @@ against it.
 from __future__ import annotations
 
 import json
+import os
+import stat
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from doorslip.auth import AUTH_HEADER, parse_credential, signature_holds
-from doorslip.crypto import generate_keypair, verify
+from doorslip.crypto import KeyPair, generate_keypair, verify
 from doorslip.envelope import VERSION as ENVELOPE_VERSION
 from doorslip.envelope import EnvelopeError, parse
 from doorslip.identity import Rejection, VerifiedSender, verify_sender
@@ -41,14 +44,19 @@ SIGNATURE_HEADER = "X-Doorslip-Signature"
 DEFAULT_WELCOME_HANDLE = "welcome@doorslip.test"
 
 
-def create_app(store: Store, *, welcome_handle: str = DEFAULT_WELCOME_HANDLE) -> FastAPI:
+def create_app(
+    store: Store,
+    *,
+    welcome_handle: str = DEFAULT_WELCOME_HANDLE,
+    welcome_key_path: str | Path | None = None,
+) -> FastAPI:
     """Build the app around an open store.
 
     A factory rather than a module-level app so tests get an isolated
     in-memory database instead of sharing global state.
     """
     app = FastAPI(title="Doorslip", version="0.1")
-    welcome = _ensure_welcome_agent(store, welcome_handle)
+    welcome = _ensure_welcome_agent(store, welcome_handle, welcome_key_path)
     app.state.store = store
     app.state.welcome = welcome
 
@@ -249,6 +257,12 @@ def create_app(store: Store, *, welcome_handle: str = DEFAULT_WELCOME_HANDLE) ->
             issuer = store.redeem_invite(code, caller.id)
         except InviteInvalid as exc:
             return _error(400, str(exc))
+
+        # The person accepting learns who they added from this very reply. The
+        # person who invited them would otherwise learn nothing at all, so they
+        # get a slip — which is also what gives a local watcher something to
+        # ring on.
+        _notify_invitation_accepted(store, welcome, issuer, caller)
         return JSONResponse({"contact": issuer.handle}, status_code=201)
 
     @app.get("/contacts")
@@ -408,17 +422,46 @@ def _server_info(request: Request) -> dict[str, Any]:
     }
 
 
-def _ensure_welcome_agent(store: Store, handle: str) -> WelcomeAgent:
-    """Create the welcome identity if it is not there yet (spec §8)."""
+def _ensure_welcome_agent(
+    store: Store, handle: str, key_path: str | Path | None = None
+) -> WelcomeAgent:
+    """Create or reload the welcome identity (spec §8).
+
+    Its key must survive a restart. Generating a fresh one leaves the desk
+    holding a key that is not in the `agent` table, so every notice it tries
+    to send — the greeting, an enrolment warning, an accepted invitation —
+    fails the lookup and is dropped without a word. That is invisible in tests
+    because tests always start from an empty database, and only shows up on a
+    real server the second time it is restarted.
+
+    Without a path the key is ephemeral, which is correct for an in-memory
+    database: both vanish together.
+    """
+    stored_key = Path(key_path) if key_path else None
     existing = store.find_human(handle)
-    if existing is not None:
-        # A restart loses the in-memory key. Fine for v0: the desk only ever
-        # signs replies it generates now, and nothing verifies its old ones
-        # after the fact.
+
+    if stored_key is not None and stored_key.exists():
+        saved = json.loads(stored_key.read_text(encoding="utf-8"))
+        keypair = KeyPair(private_key=saved["private_key"], public_key=saved["public_key"])
+    else:
         keypair = generate_keypair()
+        if stored_key is not None:
+            stored_key.parent.mkdir(parents=True, exist_ok=True)
+            stored_key.write_text(
+                json.dumps(
+                    {"private_key": keypair.private_key, "public_key": keypair.public_key}
+                ),
+                encoding="utf-8",
+            )
+            os.chmod(stored_key, stat.S_IRUSR | stat.S_IWUSR)
+
+    if existing is not None:
+        # The identity outlived its key file, or the file was replaced. Attach
+        # the current key so the desk can sign again instead of failing mutely.
+        if store.find_agent(keypair.public_key) is None:
+            store.redeem_or_attach_welcome_key(existing.id, keypair.public_key)
         return WelcomeAgent(handle=handle, human_id=existing.id, keypair=keypair)
 
-    keypair = generate_keypair()
     human = store.register_identity(
         handle=handle, pubkey=keypair.public_key, label=WELCOME_LABEL, is_welcome=True
     )
@@ -442,6 +485,25 @@ def _welcome_reply(
         from_human_id=welcome.human_id,
         from_agent_id=agent_id,
         to_human_id=sender_human_id,
+    )
+
+
+def _notify_invitation_accepted(
+    store: Store, welcome: WelcomeAgent, inviter: Human, acceptor: Human
+) -> None:
+    """Deliver the acceptance notice to whoever issued the code."""
+    raw, signature = welcome.notify_invitation_accepted(inviter.handle, acceptor.handle)
+    agent_id = store.agent_id_for(welcome.keypair.public_key)
+    if agent_id is None:
+        return
+    store.add_contact_pair(welcome.human_id, inviter.id)
+    store.store_message(
+        envelope=parse(raw),
+        raw=raw,
+        signature=signature,
+        from_human_id=welcome.human_id,
+        from_agent_id=agent_id,
+        to_human_id=inviter.id,
     )
 
 

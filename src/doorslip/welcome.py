@@ -121,6 +121,50 @@ class WelcomeAgent:
         sealed = seal(raw, self.keypair.private_key)
         return sealed.raw, sealed.signature
 
+    def notify_invitation_accepted(
+        self, inviter_handle: str, acceptor_handle: str
+    ) -> tuple[bytes, str]:
+        """Tell whoever sent an invitation that it was redeemed.
+
+        The address book is symmetric the instant a code is accepted, but the
+        knowledge was not: the person accepting is told who they just added,
+        while the person who invited them learns nothing. In a protocol that
+        goes out of its way to make the connection mutual, leaving one side
+        guessing is an oversight rather than a design.
+
+        It also gives the local watcher something to ring on. An accepted
+        invitation used to produce no message at all, so the only way to find
+        out was to run `contacts` and notice.
+
+        Only the inviter gets this. The acceptor already learned it from the
+        reply to their own request.
+        """
+        state = {
+            "topic": "an invitation you sent was accepted",
+            "status": "confirmed",
+            "who": [inviter_handle, acceptor_handle],
+            "tasks": [
+                {"what": f"you and {acceptor_handle} can now write to each other",
+                 "who": inviter_handle}
+            ],
+        }
+        raw = build(
+            sender_handle=self.handle,
+            sender_agent=WELCOME_LABEL,
+            sender_pubkey=self.keypair.public_key,
+            to=inviter_handle,
+            state=state,
+            prose=(
+                f"{acceptor_handle} redeemed an invitation code you issued. "
+                "They are in your address book now, and you are in theirs — "
+                "either of you can write first.\n\n"
+                "That code is spent. Codes work once, so anyone else you want "
+                "to reach needs one of their own."
+            ),
+        )
+        sealed = seal(raw, self.keypair.private_key)
+        return sealed.raw, sealed.signature
+
     def notify_enrolment(self, handle: str, new_label: str) -> tuple[bytes, str]:
         """Announce that another key was attached to an identity (spec §7.3).
 

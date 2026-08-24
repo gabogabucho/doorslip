@@ -366,6 +366,22 @@ class Store:
         assert human is not None  # FK guarantees it
         return human
 
+    def redeem_or_attach_welcome_key(self, human_id: str, pubkey: str) -> None:
+        """Attach a key to the welcome desk after a key file was lost.
+
+        Not an enrolment: no code, no notification, no five-agent ceiling. The
+        desk is the server's own identity and this is how it recovers the
+        ability to sign after its key file went missing, rather than failing
+        every notice in silence.
+        """
+        with self._db:
+            self._db.execute(
+                "INSERT INTO agent (id, human_id, label, pubkey, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), human_id, "welcome", pubkey, _now_text()),
+            )
+        self.log("welcome_key_attached", pubkey=pubkey, human_id=human_id)
+
     def active_agent_labels(self, human_id: str) -> list[str]:
         return [
             row[0]

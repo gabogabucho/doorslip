@@ -357,7 +357,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from doorslip.api import create_app
     from doorslip.store import Store, connect
 
-    app = create_app(Store(connect(args.db)), welcome_handle=args.welcome_handle)
+    # The desk's key lives beside the database so both survive a restart
+    # together, and an in-memory database gets an ephemeral key to match.
+    key_path = None if args.db == ":memory:" else Path(args.db).with_suffix(".welcome.json")
+    app = create_app(
+        Store(connect(args.db)),
+        welcome_handle=args.welcome_handle,
+        welcome_key_path=key_path,
+    )
     print(f"Doorslip on http://{args.host}:{args.port}  ·  db={args.db}")
     print(f"welcome desk: {args.welcome_handle}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
