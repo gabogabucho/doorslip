@@ -14,6 +14,10 @@ interprets nothing.
 > **Status: v0.** Usable and tested, but the wire format may still change and
 > there is no federation yet. Identities created now are meant to be disposable.
 
+**Why it works this way:** [MANIFESTO.md](MANIFESTO.md) — six things this
+refuses to do, what "finished" means, and what will be declined.
+**To contribute:** [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## What it is not
 
 - Not a chat protocol. Messages are structured proposals, not turns of dialogue.
