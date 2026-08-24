@@ -185,6 +185,54 @@ def test_acknowledging_marks_the_message_as_incorporated(gabo, tomas):
     assert tomas.inbox(unacked_only=True) == []
 
 
+def test_the_agent_that_started_a_thread_can_still_reconstruct_it(gabo, tomas):
+    """Regression: the server files each message into the RECIPIENT's inbox only.
+
+    An agent reading its inbox alone never sees what it wrote itself — so the
+    one who opened a thread would be missing the root and reconstruction would
+    fail outright. Every agent keeps its own outbox for exactly this reason.
+    """
+    _introduce(gabo, tomas)
+    opened = gabo.send(to=tomas.handle, state={"topic": "barbecue"}, prose="Saturday?")
+    tomas.send(
+        to=gabo.handle,
+        state={"status": "confirmed"},
+        prose="Yes",
+        thread_id=opened["thread_id"],
+        parent_message_id=opened["message_id"],
+    )
+
+    from_opener = gabo.thread_state(opened["thread_id"])
+    from_replier = tomas.thread_state(opened["thread_id"])
+
+    assert from_opener.state == {"topic": "barbecue", "status": "confirmed"}
+    assert from_opener.state == from_replier.state
+
+
+def test_a_thread_reconstructs_the_same_way_for_both_sides(gabo, tomas):
+    """Determinism is what makes "state errors" countable (spec §2)."""
+    _introduce(gabo, tomas)
+    opened = gabo.send(to=tomas.handle, state={"topic": "barbecue", "where": "park"}, prose="1")
+    second = tomas.send(
+        to=gabo.handle, state={"where": "my place"}, prose="2",
+        thread_id=opened["thread_id"], parent_message_id=opened["message_id"],
+    )
+    gabo.send(
+        to=tomas.handle, state={"status": "confirmed"}, prose="3",
+        thread_id=opened["thread_id"], parent_message_id=second["message_id"],
+    )
+
+    assert gabo.thread_state(opened["thread_id"]).state == {
+        "topic": "barbecue",
+        "where": "my place",
+        "status": "confirmed",
+    }
+    assert (
+        gabo.thread_state(opened["thread_id"]).state
+        == tomas.thread_state(opened["thread_id"]).state
+    )
+
+
 def test_you_cannot_acknowledge_someone_elses_message(gabo, tomas):
     _introduce(gabo, tomas)
     gabo.send(to=tomas.handle, state={"topic": "barbecue"}, prose="Saturday?")

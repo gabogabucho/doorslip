@@ -70,11 +70,26 @@ def load_or_create_keypair(path: str | Path) -> KeyPair:
 class Agent:
     """One agent key operating one human's mailbox."""
 
-    def __init__(self, http: HttpClient, *, handle: str, label: str, keypair: KeyPair):
+    def __init__(
+        self,
+        http: HttpClient,
+        *,
+        handle: str,
+        label: str,
+        keypair: KeyPair,
+        outbox_path: str | Path | None = None,
+    ):
         self._http = http
         self.handle = handle
         self.label = label
         self._keypair = keypair
+        # An agent must remember what it said. The server files each message
+        # into exactly one inbox — the recipient's — so an agent reading only
+        # its inbox sees half a conversation and cannot reconstruct a thread it
+        # started. Keeping our own outbox is also the honest split: the server
+        # transports, the agent interprets.
+        self._outbox_path = Path(outbox_path) if outbox_path else None
+        self._sent: list[dict[str, Any]] = []
 
     @property
     def pubkey(self) -> str:
@@ -174,7 +189,28 @@ class Agent:
             )
         )
         envelope = json.loads(raw)
+        self._remember(envelope)
         return {"message_id": envelope["message_id"], "thread_id": envelope["thread_id"]}
+
+    def _remember(self, envelope: dict[str, Any]) -> None:
+        """File a sent envelope into our own outbox."""
+        self._sent.append(envelope)
+        if self._outbox_path is not None:
+            self._outbox_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._outbox_path.open("a", encoding="utf-8") as outbox:
+                outbox.write(json.dumps(envelope) + "\n")
+
+    def sent(self) -> list[dict[str, Any]]:
+        """Envelopes this agent sent, from memory and from the outbox file."""
+        if self._outbox_path is None or not self._outbox_path.exists():
+            return list(self._sent)
+        stored = [
+            json.loads(line)
+            for line in self._outbox_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        seen = {envelope["message_id"] for envelope in stored}
+        return stored + [e for e in self._sent if e["message_id"] not in seen]
 
     def inbox(self, *, unacked_only: bool = False) -> list[dict[str, Any]]:
         payload = _unwrap(
@@ -194,13 +230,23 @@ class Agent:
         )
 
     def thread_state(self, thread_id: str) -> Reconstruction:
-        """Fold every message of a thread this agent can see into one state."""
+        """Fold a whole thread into one state — what we received AND what we sent.
+
+        Both halves are required. The server files each message into the
+        recipient's inbox only, so an agent that consulted its inbox alone
+        would be missing every message it wrote itself — including the root of
+        any thread it started, which makes reconstruction impossible.
+        """
         envelopes = [
             message["envelope"]
             for message in self.inbox()
             if message["thread_id"] == thread_id
         ]
-        return reconstruct(envelopes)
+        envelopes += [
+            envelope for envelope in self.sent() if envelope["thread_id"] == thread_id
+        ]
+        unique = {envelope["message_id"]: envelope for envelope in envelopes}
+        return reconstruct(list(unique.values()))
 
 
 def _unwrap(response: Any) -> dict[str, Any]:
