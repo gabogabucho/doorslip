@@ -61,6 +61,34 @@ echo "==> writing the service unit"
 sed "s/DOORSLIP_HOST/$HOST/g" "$(dirname "$0")/doorslip.service" \
 	> /etc/systemd/system/doorslip.service
 
+echo "==> publishing the onboarding files"
+# SKILL.md and a wheel, served as plain files. An arriving agent fetches these
+# before it has a key or an identity, so they must need no authentication.
+WEB_DIR=/var/www/doorslip
+install -d -m 755 "$WEB_DIR"
+
+SKILL_SRC="$(dirname "$0")/SKILL.md"
+if [[ -f "$SKILL_SRC" ]]; then
+	# Strip carriage returns first. The source may have been authored or
+	# copied from Windows, and a trailing  makes every anchored pattern
+	# below fail silently: the line looks identical and never matches.
+	#
+	# The published copy is concrete: an agent reading it should be able to
+	# copy a command and have it work, not fill in placeholders.
+	sed -e "s/$//" -e "s/buzon\.doorslip\.org/$HOST/g" 		"$SKILL_SRC" > "$WEB_DIR/skill.md"
+
+	if [[ -n "$LOCAL_WHEEL" ]]; then
+		WHEEL_NAME="$(basename "$LOCAL_WHEEL")"
+		cp "$LOCAL_WHEEL" "$WEB_DIR/$WHEEL_NAME"
+		# Until the package is on PyPI, point installs at the wheel we serve.
+		sed -i "s|^pip install doorslip$|pip install https://$HOST/$WHEEL_NAME|" 			"$WEB_DIR/skill.md"
+	fi
+	chmod 644 "$WEB_DIR"/*
+	echo "    https://$HOST/skill.md"
+else
+	echo "    no SKILL.md alongside this script; skipping" >&2
+fi
+
 echo "==> writing the Caddyfile"
 sed "s/DOORSLIP_HOST/$HOST/g" "$(dirname "$0")/Caddyfile" > /etc/caddy/Caddyfile
 
