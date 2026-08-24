@@ -105,7 +105,12 @@ render "$HERE/Caddyfile" | sed "s/DOORSLIP_HOST/$HOST/g" > /etc/caddy/Caddyfile
 
 echo "==> starting"
 systemctl daemon-reload
-systemctl enable --now doorslip
+systemctl enable doorslip
+# `enable --now` starts a stopped service but leaves a running one alone, so
+# an upgrade would install new code and keep serving the old process without
+# saying anything. Restart unconditionally: this script exists to make the
+# server match what was just installed.
+systemctl restart doorslip
 systemctl restart caddy
 
 echo

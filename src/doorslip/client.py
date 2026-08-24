@@ -90,6 +90,7 @@ class Agent:
         # transports, the agent interprets.
         self._outbox_path = Path(outbox_path) if outbox_path else None
         self._sent: list[dict[str, Any]] = []
+        self.server_info: dict[str, Any] = {}
 
     @property
     def pubkey(self) -> str:
@@ -98,8 +99,36 @@ class Agent:
     # -- plumbing ---------------------------------------------------------
 
     def _nonce(self) -> str:
-        response = self._http.get("/nonce", params={"pubkey": self.pubkey})
-        return _unwrap(response)["nonce"]
+        payload = _unwrap(self._http.get("/nonce", params={"pubkey": self.pubkey}))
+        # Every authenticated command passes through here, so this is where a
+        # client is guaranteed to hear what the server speaks. Stored, never
+        # acted on: an upgrade is the human's decision, not ours.
+        self.server_info = payload.get("server") or {}
+        return payload["nonce"]
+
+    def update_notice(self) -> dict[str, Any] | None:
+        """Whether this client is behind what the server was built from.
+
+        Advisory only. Refusing to work over a version number would strand
+        people in the middle of a conversation for something that is usually
+        cosmetic; a message their agent can pass on is enough.
+        """
+        offered = (self.server_info or {}).get("client")
+        if not offered or offered == "unknown":
+            return None
+        try:
+            from importlib.metadata import version as package_version
+
+            installed = package_version("doorslip")
+        except Exception:
+            return None
+        if _release(offered) <= _release(installed):
+            return None
+        return {
+            "installed": installed,
+            "available": offered,
+            "skill": (self.server_info or {}).get("skill"),
+        }
 
     def _auth_headers(self) -> dict[str, str]:
         return {
@@ -262,6 +291,19 @@ class Agent:
         ]
         unique = {envelope["message_id"]: envelope for envelope in envelopes}
         return reconstruct(list(unique.values()))
+
+
+def _release(text: str) -> tuple[int, ...]:
+    """Compare releases without pulling in a parser.
+
+    Anything unparseable sorts lowest, so a malformed version on either
+    side produces no advice rather than a wrong one.
+    """
+    parts: list[int] = []
+    for chunk in text.split("."):
+        digits = "".join(c for c in chunk if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
 
 
 def _unwrap(response: Any) -> dict[str, Any]:

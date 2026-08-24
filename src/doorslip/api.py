@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 
 from doorslip.auth import AUTH_HEADER, parse_credential, signature_holds
 from doorslip.crypto import generate_keypair, verify
+from doorslip.envelope import VERSION as ENVELOPE_VERSION
 from doorslip.envelope import EnvelopeError, parse
 from doorslip.identity import Rejection, VerifiedSender, verify_sender
 from doorslip.store import (
@@ -74,15 +75,25 @@ def create_app(store: Store, *, welcome_handle: str = DEFAULT_WELCOME_HANDLE) ->
     # -- identity ---------------------------------------------------------
 
     @app.get("/nonce")
-    def issue_nonce(pubkey: str) -> Response:
+    def issue_nonce(request: Request, pubkey: str) -> Response:
         """Mint a single-use nonce bound to `pubkey` (spec §7.1).
 
         Deliberately open to unregistered keys: `POST /register` needs a nonce
         before the key exists in the directory.
+
+        The reply also carries what this server speaks. Every authenticated
+        command passes through here, so it is the one place a client is
+        guaranteed to look — and a client that never learns to look cannot be
+        told later that it is out of date. Adding the field now is what keeps
+        that door open; it can stay ignored for as long as nothing needs it.
         """
         nonce = store.issue_nonce(pubkey)
         return JSONResponse(
-            {"nonce": nonce.value, "expires_at": nonce.expires_at.isoformat()}
+            {
+                "nonce": nonce.value,
+                "expires_at": nonce.expires_at.isoformat(),
+                "server": _server_info(request),
+            }
         )
 
     @app.post("/register")
@@ -365,6 +376,36 @@ def create_app(store: Store, *, welcome_handle: str = DEFAULT_WELCOME_HANDLE) ->
         return JSONResponse(store.metrics())
 
     return app
+
+
+def _server_info(request: Request) -> dict[str, Any]:
+    """What this server speaks, and where the current documents live.
+
+    Three separate things get confused as "the version", so they are named
+    apart:
+
+    - `protocol` is the wire format, the same string that goes in every
+      envelope. It is what lets a receiver handle old and new side by side.
+    - `client` is the package release this server was built from. A client
+      comparing it against its own tells its human there is an upgrade —
+      nothing is enforced, because refusing service over a version number
+      would strand people mid-conversation.
+    - `skill` is where the current instructions live. An agent read them once
+      and its understanding froze there; this is the only pointer back.
+    """
+    try:
+        from importlib.metadata import version as package_version
+
+        release = package_version("doorslip")
+    except Exception:
+        release = "unknown"
+
+    base = str(request.base_url).rstrip("/")
+    return {
+        "protocol": ENVELOPE_VERSION,
+        "client": release,
+        "skill": f"{base}/skill.md",
+    }
 
 
 def _ensure_welcome_agent(store: Store, handle: str) -> WelcomeAgent:

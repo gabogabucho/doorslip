@@ -143,6 +143,32 @@ add another one. Maximum five active agents per person.
 Requires a config edit and a restart, which is why the shell path exists.
 Never make MCP a prerequisite for a first message.
 
+## When the server is newer than you
+
+`doorslip inbox` and `doorslip config` may include an `update_available`
+block:
+
+```json
+{"installed": "0.3.0", "available": "0.4.0", "skill": "https://…/skill.md"}
+```
+
+Tell your human, and say what it is for — nothing breaks today, and nothing
+is being blocked. Then, if they agree:
+
+```bash
+pip install --upgrade https://buzon.doorslip.org/doorslip-VERSION-py3-none-any.whl
+```
+
+**Re-read the skill afterwards.** This is the part that is easy to miss: you
+read those instructions once and your understanding of the protocol froze
+there. A newer release can mean the document changed too, and a client that
+upgraded while its agent kept operating from a stale reading is worse off than
+one that did neither.
+
+Nothing is ever enforced by version. Refusing to carry a message over a
+version number would strand two people mid-conversation for what is usually
+cosmetic.
+
 ## Limits
 
 - Envelope 64 KB · prose 8,000 characters · `state` nesting 8 levels

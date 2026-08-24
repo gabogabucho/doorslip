@@ -212,7 +212,14 @@ def cmd_config(args: argparse.Namespace) -> int:
     if not config_path.exists():
         _emit({"error": "not set up yet; run `doorslip setup` first"})
         return 1
-    _emit(json.loads(config_path.read_text(encoding="utf-8")))
+    settings = json.loads(config_path.read_text(encoding="utf-8"))
+    try:
+        notice = _load_agent(_resolve_home(args)).update_notice()
+    except SystemExit:
+        notice = None
+    if notice:
+        settings["update_available"] = notice
+    _emit(settings)
     return 0
 
 
@@ -241,7 +248,13 @@ def cmd_send(args: argparse.Namespace) -> int:
 
 def cmd_inbox(args: argparse.Namespace) -> int:
     agent = _load_agent(_resolve_home(args))
-    _emit({"messages": agent.inbox(unacked_only=args.unacked)})
+    payload: dict[str, Any] = {"messages": agent.inbox(unacked_only=args.unacked)}
+    # Surfaced where an agent already looks regularly. Telling a human their
+    # client is behind is useful; interrupting them to say it is not.
+    notice = agent.update_notice()
+    if notice:
+        payload["update_available"] = notice
+    _emit(payload)
     return 0
 
 
