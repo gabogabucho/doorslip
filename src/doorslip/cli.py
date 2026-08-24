@@ -330,13 +330,18 @@ def cmd_thread(args: argparse.Namespace) -> int:
     """Fold one thread into its current state (spec §6.1)."""
     agent = _load_agent(_resolve_home(args))
     result = agent.thread_state(args.thread_id)
-    _emit(
-        {
-            "state": result.state,
-            "patches_applied": len(result.applied),
-            "diverged": result.diverged,
-        }
-    )
+    payload: dict[str, Any] = {
+        "state": result.state,
+        "patches_applied": len(result.applied),
+        "diverged": result.diverged,
+    }
+    if result.diverged:
+        payload["divergences"] = [
+            {"parent": d.parent_id, "messages": d.message_ids} for d in result.divergences
+        ]
+    if args.messages:
+        payload["messages"] = agent.thread_messages(args.thread_id)
+    _emit(payload)
     return 0
 
 
@@ -522,6 +527,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     thread = subcommands.add_parser("thread", help="reconstruct a thread's state")
     thread.add_argument("thread_id")
+    thread.add_argument(
+        "--messages",
+        action="store_true",
+        help="include the conversation itself, both sides, in parent order",
+    )
     thread.set_defaults(func=cmd_thread)
 
     watcher = subcommands.add_parser("watch", help="poll locally and announce new slips")

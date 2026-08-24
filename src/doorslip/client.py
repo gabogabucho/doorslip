@@ -311,6 +311,65 @@ class Agent:
             )
         )
 
+    def thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
+        """The whole conversation, in the order the parent chain defines.
+
+        Both halves again: what arrived and what this agent wrote. Reading a
+        thread from the inbox alone shows one side talking to itself.
+
+        Messages on a branch that reconstruction did not follow are marked
+        rather than hidden. After an exchange nobody supervised, the discarded
+        branch is often the most interesting thing on the page — it is where
+        the two sides were about to disagree.
+        """
+        received = {
+            m["message_id"]: {
+                "message_id": m["message_id"],
+                "from": m["from"],
+                "envelope": m["envelope"],
+                "direction": "in",
+                "acked": m.get("acked"),
+            }
+            for m in self.inbox()
+            if m["thread_id"] == thread_id
+        }
+        for envelope in self.sent():
+            if envelope.get("thread_id") != thread_id:
+                continue
+            received.setdefault(
+                envelope["message_id"],
+                {
+                    "message_id": envelope["message_id"],
+                    "from": envelope["from"]["handle"],
+                    "envelope": envelope,
+                    "direction": "out",
+                    "acked": None,
+                },
+            )
+
+        if not received:
+            return []
+
+        result = reconstruct([m["envelope"] for m in received.values()])
+        applied = list(result.applied)
+        ordered = [received[mid] for mid in applied if mid in received]
+        for message in ordered:
+            message["on_main_branch"] = True
+
+        leftover = [m for mid, m in received.items() if mid not in set(applied)]
+        for message in leftover:
+            message["on_main_branch"] = False
+
+        for message in ordered + leftover:
+            envelope = message["envelope"]
+            message["prose"] = envelope.get("prose")
+            message["state"] = envelope.get("state")
+            message["timestamp"] = envelope.get("timestamp")
+            message["parent_message_id"] = envelope.get("parent_message_id")
+            del message["envelope"]
+
+        return ordered + leftover
+
     def thread_state(self, thread_id: str) -> Reconstruction:
         """Fold a whole thread into one state — what we received AND what we sent.
 

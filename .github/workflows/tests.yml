@@ -1,0 +1,61 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Windows is here because this project keeps finding platform bugs there
+    # rather than in spite of it: line endings in shebangs, chmod that cannot
+    # express owner-only, a console codepage that mangles UTF-8. All of those
+    # reached a real machine before anybody noticed.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: install
+        run: uv sync --extra dev --python ${{ matrix.python }}
+
+      - name: tests
+        run: uv run pytest -q
+
+  demo:
+    # The suite proves the pieces; this proves they add up. It runs the whole
+    # done-criterion of the spec - two identities, an invitation, an eight-turn
+    # thread, both sides reconstructing the same state - and exits non-zero if
+    # any of it stops holding.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --extra dev
+      - run: uv run python demo.py
+
+  package:
+    # A version on PyPI can never be replaced, so a broken description is
+    # permanent for that release. Checking on every push means the answer is
+    # already known on the day of a release.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - run: uv run --with twine twine check dist/*
+      - name: nothing private in the archive
+        run: |
+          if tar -tzf dist/*.tar.gz | grep -iE 'key\.json|\.db$|tmp-|outbox'; then
+            echo "the archive contains something it should not" >&2
+            exit 1
+          fi

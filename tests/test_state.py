@@ -131,3 +131,72 @@ def test_a_cycle_is_refused_instead_of_looping_forever():
 
 def test_an_empty_thread_reconstructs_to_an_empty_state():
     assert reconstruct([]).state == {}
+
+
+# -- which branch the conversation actually took --------------------------
+
+
+def test_divergence_follows_the_branch_that_continued():
+    """From a real thread. Two agents wrote at once; one message was never
+    answered while the other carried the rest of the exchange and the agreed
+    ending. Picking the lowest message_id reported the dead stub as the state
+    and the actual conclusion as a discarded branch — a thread that had closed
+    as `done` read back as still in progress.
+    """
+    messages = [
+        _message("a", None, {"topic": "landing", "status": "proposed"}),
+        _message("b-dead-end", "a", {"status": "autonomous"}),
+        _message("c-continued", "a", {"status": "proposing-consensus"}),
+        _message("d", "c-continued", {"status": "done"}),
+    ]
+
+    result = reconstruct(messages)
+
+    assert result.state["status"] == "done"
+    assert result.applied == ["a", "c-continued", "d"]
+    assert result.diverged
+
+
+def test_the_divergence_is_still_reported_not_resolved():
+    """Depth says where the conversation went. It does not claim to settle who
+    was right, and the caller is still told the two sides disagreed.
+    """
+    messages = [
+        _message("a", None, {"topic": "x"}),
+        _message("b", "a", {"where": "park"}),
+        _message("c", "a", {"where": "my place"}),
+        _message("d", "c", {"status": "confirmed"}),
+    ]
+
+    result = reconstruct(messages)
+
+    assert result.divergences[0].message_ids == ["b", "c"]
+    assert result.state["where"] == "my place"
+
+
+def test_equal_branches_break_the_tie_deterministically():
+    """Two branches of the same length must still reconstruct identically on
+    both sides, or the state error the criterion counts becomes unmeasurable.
+    """
+    messages = [
+        _message("a", None, {"topic": "x"}),
+        _message("z-branch", "a", {"where": "park"}),
+        _message("m-branch", "a", {"where": "my place"}),
+    ]
+
+    first = reconstruct(messages)
+    shuffled = reconstruct(list(reversed(messages)))
+
+    assert first.state == shuffled.state
+    assert first.applied == shuffled.applied
+
+
+def test_a_long_thread_does_not_exhaust_the_stack():
+    """Depth is computed bottom-up rather than by recursing."""
+    messages = [_message("m0", None, {"topic": "x"})]
+    messages += [_message(f"m{n}", f"m{n - 1}", {"n": n}) for n in range(1, 2000)]
+
+    result = reconstruct(messages)
+
+    assert len(result.applied) == 2000
+    assert result.state["n"] == 1999

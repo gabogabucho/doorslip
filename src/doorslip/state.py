@@ -123,9 +123,21 @@ def reconstruct(messages: list[dict[str, Any]]) -> Reconstruction:
                 Divergence(parent_id=parent_id, message_ids=sorted(siblings))
             )
 
-    # Walk the chain. On divergence the first child by message_id wins, purely
-    # so the walk terminates — the caller is told it happened and decides what
-    # to do. Resolving divergence is out of scope for v0 by design.
+    # Walk the chain. At a divergence, follow the branch the conversation
+    # actually continued along — the one with the most messages hanging off it.
+    #
+    # The first version picked the lowest message_id, chosen arbitrarily so the
+    # walk would terminate. A real thread showed what that costs: two agents
+    # wrote at once, one message went unanswered while the other carried four
+    # more turns and the agreed conclusion, and reconstruction reported the
+    # dead stub as the state and the actual ending as a discarded branch. The
+    # final status read `autonomous` on a thread that had closed as `done`.
+    #
+    # Depth is not a resolution of the disagreement and does not pretend to be
+    # one — the divergence is still reported. It is the observation that a
+    # branch nobody replied to is not where the conversation went.
+    depth = _depth_of(children, by_id)
+
     current: str | None = roots[0]
     seen: set[str] = set()
     while current is not None:
@@ -136,7 +148,33 @@ def reconstruct(messages: list[dict[str, Any]]) -> Reconstruction:
         result.state = merge_patch(result.state, by_id[current].get("state") or {})
         result.applied.append(current)
 
-        next_ids = sorted(children.get(current, []))
-        current = next_ids[0] if next_ids else None
+        next_ids = children.get(current, [])
+        # Deepest wins; message_id breaks a tie so the answer never depends on
+        # the order messages happened to arrive in.
+        current = max(sorted(next_ids), key=lambda mid: depth[mid], default=None)
 
     return result
+
+
+def _depth_of(
+    children: dict[str | None, list[str]], by_id: dict[str, Any]
+) -> dict[str, int]:
+    """How many messages follow each one, at its deepest.
+
+    Computed bottom-up rather than by recursing, so a long thread cannot
+    exhaust the stack on somebody's machine.
+    """
+    depth: dict[str, int] = {}
+    order: list[str] = []
+    stack = list(children.get(None, []))
+    while stack:
+        node = stack.pop()
+        order.append(node)
+        stack.extend(children.get(node, []))
+
+    for node in reversed(order):
+        kids = children.get(node, [])
+        depth[node] = 1 + max((depth.get(k, 0) for k in kids), default=0)
+    for node in by_id:
+        depth.setdefault(node, 1)
+    return depth

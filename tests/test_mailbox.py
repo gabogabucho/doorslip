@@ -528,3 +528,49 @@ def test_a_refused_code_notifies_nobody(gabo, tomas, http):
         tomas.accept("ds_inv_never-issued")
 
     assert len(gabo.inbox()) == before
+
+
+# -- reading a thread back ------------------------------------------------
+
+
+def test_a_thread_reads_as_a_conversation_from_either_side(gabo, tomas):
+    """After an exchange nobody supervised, the first thing a human wants is
+    to read what was actually said. Neither inbox alone can show it: each
+    holds half.
+    """
+    _introduce(gabo, tomas)
+    opened = gabo.send(to=tomas.handle, state={"topic": "barbecue"}, prose="Saturday?")
+    tomas.send(
+        to=gabo.handle, state={"status": "confirmed"}, prose="Yes",
+        thread_id=opened["thread_id"], parent_message_id=opened["message_id"],
+    )
+
+    from_gabo = gabo.thread_messages(opened["thread_id"])
+    from_tomas = tomas.thread_messages(opened["thread_id"])
+
+    assert [m["prose"] for m in from_gabo] == ["Saturday?", "Yes"]
+    assert [m["prose"] for m in from_tomas] == ["Saturday?", "Yes"]
+    assert [m["direction"] for m in from_gabo] == ["out", "in"]
+
+
+def test_a_discarded_branch_is_marked_not_hidden(gabo, tomas):
+    """When both sides wrote at once, the branch reconstruction did not follow
+    is often the most interesting thing on the page — it is where they were
+    about to disagree.
+    """
+    _introduce(gabo, tomas)
+    opened = gabo.send(to=tomas.handle, state={"topic": "barbecue"}, prose="Saturday?")
+    for prose in ("my place", "the park"):
+        tomas.send(
+            to=gabo.handle, state={"where": prose}, prose=prose,
+            thread_id=opened["thread_id"], parent_message_id=opened["message_id"],
+        )
+
+    messages = gabo.thread_messages(opened["thread_id"])
+
+    assert len(messages) == 3
+    assert sum(1 for m in messages if not m["on_main_branch"]) == 1
+
+
+def test_an_empty_thread_reads_as_nothing(gabo):
+    assert gabo.thread_messages("no-such-thread") == []
