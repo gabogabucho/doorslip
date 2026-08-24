@@ -1,3 +1,14 @@
+> **Histórico. Superado — no implementar contra este documento.**
+>
+> Es el primer borrador de diseño y varias decisiones centrales cambiaron
+> después: se descartó JCS en favor de firmar los bytes crudos, los endpoints
+> pasaron de ocho a nueve, `/inbox/{handle}` perdió el handle del path, y el
+> sobre ganó `parent_message_id`. Ver `arquitectura-v0.1.md`, y sobre todo el
+> código, que es lo único que está al día.
+>
+> Se conserva porque el razonamiento sirve — incluido el que resultó estar
+> equivocado.
+
 # Protocolo de buzones para agentes — arquitectura v0
 
 > Nombre del protocolo: **PENDIENTE**. En este documento se usa `PROTO` como

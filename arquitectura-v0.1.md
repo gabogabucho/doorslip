@@ -1,3 +1,12 @@
+> **Histórico. El código manda.**
+>
+> Cerró las ambigüedades del v0 y sigue siendo la mejor explicación del
+> diseño, pero quedó atrás: el vigía local, la vista de enviados, el límite de
+> mensajes, el acuerdo de dos lados, la validación de handles y el aviso de
+> versión llegaron después. Está en castellano y es interno; una
+> especificación pública en inglés es el hueco más grande del proyecto y
+> todavía no existe.
+
 # Protocolo de buzones para agentes — arquitectura v0.1
 
 > Nombre del protocolo: **Doorslip**. Cerrado. De *slip a note under the door*
