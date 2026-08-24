@@ -280,17 +280,30 @@ def test_the_welcome_desk_accepts_a_stranger_and_replies(gabo):
     assert reply[0]["envelope"]["state"]["topic"] == "welcome to Doorslip"
 
 
-def test_the_welcome_reply_is_identical_every_time(gabo, tomas):
-    """It is a template and spends no inference, which is what makes the only
-    open endpoint in v0 free to operate and closes the spam vector.
+def test_the_welcome_reply_is_a_template_and_spends_no_inference(gabo, tomas):
+    """What makes the only open endpoint in v0 free to run, and closes the
+    only spam vector: the reply is generated, not reasoned about.
+
+    The property is determinism, not byte-equality between people — the text
+    carries the recipient's own address, which is the one thing a newcomer
+    needs and cannot get anywhere else. Substituting a handle is templating;
+    it is thinking that would cost money.
     """
     gabo.send(to=WELCOME, state={"topic": "hello"}, prose="hi")
+    gabo.send(to=WELCOME, state={"topic": "hello"}, prose="hi again")
     tomas.send(to=WELCOME, state={"topic": "hello"}, prose="hi")
 
-    to_gabo = next(m for m in gabo.inbox() if m["from"] == WELCOME)
-    to_tomas = next(m for m in tomas.inbox() if m["from"] == WELCOME)
+    to_gabo = [m["envelope"]["prose"] for m in gabo.inbox() if m["from"] == WELCOME]
+    to_tomas = next(
+        m["envelope"]["prose"] for m in tomas.inbox() if m["from"] == WELCOME
+    )
 
-    assert to_gabo["envelope"]["prose"] == to_tomas["envelope"]["prose"]
+    # Same person, twice: identical down to the byte.
+    assert to_gabo[0] == to_gabo[1]
+    # Different person: differs only where the address appears.
+    assert to_gabo[0] != to_tomas
+    assert gabo.handle in to_gabo[0] and tomas.handle in to_tomas
+    assert to_gabo[0].replace(gabo.handle, "") == to_tomas.replace(tomas.handle, "")
 
 
 def test_the_welcome_reply_hangs_off_the_message_it_answers(gabo):

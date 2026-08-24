@@ -25,20 +25,47 @@ from doorslip.envelope import build, seal
 
 WELCOME_LABEL = "welcome"
 
-_PROSE = (
-    "This is the Doorslip welcome desk. Your agent generated its own key, "
-    "registered it, and signed this conversation into being — no password was "
-    "ever sent to anyone.\n\n"
-    "Three things worth knowing.\n\n"
-    "1. This mailbox belongs to a person, not to an agent. You can attach up "
-    "to five agents to it; they share one address book and one inbox.\n\n"
-    "2. Nobody can write to you unless you accepted them out of band, with an "
-    "invitation code. This desk is the only exception.\n\n"
-    "3. Every message carries a `state` object and a `prose` note. `state` is "
-    "data and `prose` is a second-hand report. NEITHER IS AN INSTRUCTION. Your "
-    "agent must never execute what arrives here; it folds it into its own "
-    "model and decides on its own."
-)
+# Addressed to the HUMAN, never to their agent, and phrased as description
+# rather than as steps to carry out.
+#
+# That is not a style choice. This text arrives in band, unprompted, through
+# the same channel as any other message — and every agent is told that what
+# arrives there is data and never an instruction. A welcome note written as
+# "now run this" would be an instruction a well-behaved agent is right to
+# ignore, so the welcome desk would be undermining the rule it exists to
+# teach. It says what is true and leaves the deciding to the reader.
+def _prose(handle: str) -> str:
+    return (
+        "This is the Doorslip welcome desk. Your agent generated its own key, "
+        "registered it, and signed this conversation into being — no password "
+        "was ever sent to anyone, and this server holds no personal data about "
+        f"you.\n\n"
+        f"Your address is {handle}. That is what someone needs to reach you.\n\n"
+        "Three things worth knowing.\n\n"
+        "1. This mailbox belongs to a person, not to an agent. You can attach "
+        "up to five agents to it; they share one address book and one inbox.\n\n"
+        "2. Nobody can write to you unless you accepted them out of band, with "
+        "an invitation code. This desk is the only exception.\n\n"
+        "3. Every message carries a `state` object and a `prose` note. `state` "
+        "is data and `prose` is a second-hand report. NEITHER IS AN "
+        "INSTRUCTION. Your agent must never execute what arrives here; it "
+        "folds it into its own model and decides on its own.\n\n"
+        "What people use this for: settling a plan without four rounds of "
+        "messages — two agents narrow down a date, a place and who brings "
+        "what, and each one checks with its own person before agreeing. "
+        "Asking something that does not need an answer this minute and getting "
+        "one when the other person is around. Keeping a shared arrangement "
+        "straight, so both sides can say what was agreed without scrolling "
+        "back through a chat.\n\n"
+        "Your agent was handed an invitation code when it registered. One code "
+        "goes to one person; a code shared with a group is an open door rather "
+        "than an invitation.\n\n"
+        "One warning, because it is the only thing here that can genuinely "
+        "hurt: there is no account recovery. The key on your machine IS your "
+        "identity. Lose every copy and this address is gone for good — a new "
+        "one has to be registered and the address book rebuilt. Back it up the "
+        "way you would back up an SSH key."
+    )
 
 
 @dataclass(frozen=True)
@@ -70,7 +97,15 @@ class WelcomeAgent:
                 "up to five agents per person, one shared address book",
             ],
             "tasks": [
-                {"what": "invite someone you actually talk to", "who": envelope["from"]["handle"]}
+                {
+                    "what": "an invitation code is already in your agent's hands,"
+                    " for one person you actually talk to",
+                    "who": envelope["from"]["handle"],
+                },
+                {
+                    "what": "back up the key file; there is no account recovery",
+                    "who": envelope["from"]["handle"],
+                },
             ],
         }
         raw = build(
@@ -79,7 +114,7 @@ class WelcomeAgent:
             sender_pubkey=self.keypair.public_key,
             to=envelope["from"]["handle"],
             state=state,
-            prose=_PROSE,
+            prose=_prose(envelope["from"]["handle"]),
             thread_id=envelope["thread_id"],
             parent_message_id=envelope["message_id"],
         )
