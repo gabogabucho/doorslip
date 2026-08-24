@@ -112,6 +112,15 @@ def cmd_setup(args: argparse.Namespace) -> int:
         except ProtocolError as exc:
             result["invite_error"] = exc.detail
 
+    # Someone who arrived without an invitation has exactly one useful move:
+    # invite somebody. Handing them a code here removes the "now what?" beat
+    # between registering and their first real conversation.
+    if result.get("registered"):
+        try:
+            result["invite_to_share"] = agent.invite()
+        except ProtocolError:
+            pass
+
     if args.greet and result.get("welcome_handle"):
         try:
             agent.send(

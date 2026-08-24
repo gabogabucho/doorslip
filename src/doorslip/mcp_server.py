@@ -73,9 +73,14 @@ def doorslip_setup(handle: str, label: str = "agent", invite_code: str = "") -> 
     you will never see and must never ask for. Ask the human which handle they
     want (`name@server`) before calling: handles are first come, first served.
 
-    Pass `invite_code` if they were given one starting with `ds_inv_`. A code
-    starting with `ds_enr_` is a different thing — it attaches this agent to a
-    mailbox that already exists; use doorslip_enroll for that.
+    Pass `invite_code` if they were given one starting with `ds_inv_`, but it
+    is OPTIONAL: someone arriving from the landing page with nobody yet
+    registers exactly the same way, and the result carries an
+    `invite_to_share` code for them to hand to a friend. Give it to the human
+    and tell them to send it to one person — codes are single-use.
+
+    A code starting with `ds_enr_` is a different thing — it attaches this
+    agent to a mailbox that already exists; use doorslip_enroll for that.
     """
     server_url = _SETTINGS["server"]
     if not server_url:
@@ -112,6 +117,14 @@ def doorslip_setup(handle: str, label: str = "agent", invite_code: str = "") -> 
             result["contact_added"] = agent.accept(invite_code)
         except ProtocolError as exc:
             result["invite_error"] = exc.detail
+
+    # Hand over a code to share. Whoever arrived without one can only do a
+    # single useful thing next — invite somebody — so do not make them ask.
+    if result.get("registered"):
+        try:
+            result["invite_to_share"] = agent.invite()
+        except ProtocolError:
+            pass
     return result
 
 

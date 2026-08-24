@@ -3,8 +3,18 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 
-# Claves privadas. Nunca, bajo ninguna circunstancia.
+# Agent identity. NEVER commit any of this.
+#
+# The file is called key.json, so a pattern like *.key does not catch it —
+# that gap put two private keys into a commit already. Match the real names
+# and the whole agent home directory, not a guess at the extension.
+key.json
 *.key
 keys/
+outbox.jsonl
+.doorslip*/
+tmp-*/
