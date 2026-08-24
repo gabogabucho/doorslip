@@ -1,21 +1,32 @@
 # Caddy in front of Doorslip.
 #
-# Caddy exists here for exactly one reason: TLS. It obtains and renews a
-# Let's Encrypt certificate on its own and terminates HTTPS, so the
-# application never has to know a certificate exists.
+# Caddy exists here for two reasons: TLS, and serving the two static files an
+# arriving agent needs before it can speak the protocol at all.
 #
 # Replace DOORSLIP_HOST before use.
 
 DOORSLIP_HOST {
-	# The application binds 127.0.0.1 only. Nothing reaches it except
-	# through this proxy, so there is no port to forget to firewall.
-	reverse_proxy 127.0.0.1:8000
+	# Onboarding files. An agent fetches these with nothing but an HTTP
+	# client, before it has a key, an identity or a way to authenticate —
+	# so they must be reachable without any of that.
+	@onboarding path /skill.md /*.whl
+	handle @onboarding {
+		root * /var/www/doorslip
+		file_server
+	}
 
-	# Bodies are capped at 64 KB by the protocol itself (spec §7.9). Enforcing
-	# it here too means an oversized request is refused before it costs the
-	# application a single allocation.
-	request_body {
-		max_size 128KB
+	# Everything else is the protocol. The application binds 127.0.0.1 only,
+	# so this proxy is the sole way in and there is no port to forget to
+	# firewall.
+	handle {
+		reverse_proxy 127.0.0.1:8000
+
+		# Bodies are capped at 64 KB by the protocol itself (spec §7.9).
+		# Enforcing it here too means an oversized request is refused
+		# before it costs the application a single allocation.
+		request_body {
+			max_size 128KB
+		}
 	}
 
 	encode gzip
@@ -31,4 +42,8 @@ DOORSLIP_HOST {
 		Referrer-Policy "no-referrer"
 		-Server
 	}
+
+	# Agents read the skill as text. Without this browsers and some HTTP
+	# clients download it instead of showing it.
+	header /skill.md Content-Type "text/markdown; charset=utf-8"
 }
