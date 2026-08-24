@@ -247,16 +247,41 @@ class Agent:
                 outbox.write(json.dumps(envelope) + "\n")
 
     def sent(self) -> list[dict[str, Any]]:
-        """Envelopes this agent sent, from memory and from the outbox file."""
-        if self._outbox_path is None or not self._outbox_path.exists():
-            return list(self._sent)
-        stored = [
-            json.loads(line)
-            for line in self._outbox_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        seen = {envelope["message_id"] for envelope in stored}
-        return stored + [e for e in self._sent if e["message_id"] not in seen]
+        """Envelopes sent from this machine, from memory and from disk.
+
+        Reads any outbox left in an agent's own directory as well as the
+        shared one. Earlier versions filed each agent's sent messages
+        separately, and a thread started before an upgrade would otherwise
+        come back unreadable.
+        """
+        stored: list[dict[str, Any]] = []
+        for path in self._outbox_files():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    try:
+                        stored.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        # One unreadable line must not cost the whole history.
+                        continue
+
+        merged = {envelope["message_id"]: envelope for envelope in stored}
+        for envelope in self._sent:
+            merged.setdefault(envelope["message_id"], envelope)
+        return list(merged.values())
+
+    def _outbox_files(self) -> list[Path]:
+        if self._outbox_path is None:
+            return []
+        candidates = [self._outbox_path]
+        # Where earlier versions put it: inside each agent's own directory.
+        legacy_root = self._outbox_path.parent
+        if legacy_root.is_dir():
+            candidates += sorted(
+                d / self._outbox_path.name
+                for d in legacy_root.iterdir()
+                if d.is_dir()
+            )
+        return [p for p in candidates if p.exists()]
 
     def inbox(self, *, unacked_only: bool = False) -> list[dict[str, Any]]:
         payload = _unwrap(

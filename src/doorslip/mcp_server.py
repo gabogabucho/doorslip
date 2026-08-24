@@ -28,7 +28,7 @@ from typing import Any
 import httpx
 from mcp.server.mcpserver import MCPServer
 
-from doorslip.cli import CONFIG_NAME, KEY_NAME, OUTBOX_NAME, agent_home, discover_home
+from doorslip.cli import CONFIG_NAME, KEY_NAME, agent_home, discover_home, outbox_path
 from doorslip.client import Agent, ProtocolError, load_or_create_keypair
 
 # Named `server`, not `mcp`: a module-level `mcp` would shadow the package
@@ -66,7 +66,7 @@ def _agent() -> Agent:
         handle=config["handle"],
         label=config["label"],
         keypair=load_or_create_keypair(home / KEY_NAME),
-        outbox_path=home / OUTBOX_NAME,
+        outbox_path=outbox_path(home),
     )
 
 
@@ -103,7 +103,7 @@ def doorslip_setup(handle: str, label: str = "agent", invite_code: str = "") -> 
         handle=handle,
         label=label,
         keypair=load_or_create_keypair(home / KEY_NAME),
-        outbox_path=home / OUTBOX_NAME,
+        outbox_path=outbox_path(home),
     )
 
     result: dict[str, Any] = {"handle": handle, "server": server_url}
@@ -258,7 +258,7 @@ def doorslip_enroll(enroll_code: str, label: str = "agent") -> dict:
         handle="",
         label=label,
         keypair=load_or_create_keypair(home / KEY_NAME),
-        outbox_path=home / OUTBOX_NAME,
+        outbox_path=outbox_path(home),
     )
     try:
         registered = agent.register(enroll_code=enroll_code)

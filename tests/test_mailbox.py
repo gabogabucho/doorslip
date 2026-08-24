@@ -574,3 +574,50 @@ def test_a_discarded_branch_is_marked_not_hidden(gabo, tomas):
 
 def test_an_empty_thread_reads_as_nothing(gabo):
     assert gabo.thread_messages("no-such-thread") == []
+
+
+def test_agents_on_one_machine_share_what_was_sent(gabo, tomas, http, tmp_path):
+    """Two agents act for the same person and take part in the same threads.
+
+    A per-agent outbox leaves each holding a different half of the same
+    conversation, and a thread one agent started cannot be read back by the
+    other at all — which is how a reconstruction failure reached a real user.
+    """
+    from doorslip.crypto import generate_keypair
+
+    shared = tmp_path / "outbox.jsonl"
+    hermes = Agent(
+        http, handle=gabo.handle, label="hermes",
+        keypair=gabo._keypair, outbox_path=shared,
+    )
+    _introduce(gabo, tomas)
+    opened = hermes.send(to=tomas.handle, state={"topic": "barbecue"}, prose="Saturday?")
+    tomas.send(
+        to=gabo.handle, state={"status": "confirmed"}, prose="Yes",
+        thread_id=opened["thread_id"], parent_message_id=opened["message_id"],
+    )
+
+    # A second agent properly enrolled: its own key, the same mailbox.
+    claude = Agent(
+        http, handle="", label="claude",
+        keypair=generate_keypair(), outbox_path=shared,
+    )
+    claude.handle = claude.register(enroll_code=gabo.enroll_code())["handle"]
+
+    assert claude.thread_state(opened["thread_id"]).state["status"] == "confirmed"
+
+
+def test_an_unreadable_outbox_line_does_not_cost_the_history(gabo, tmp_path):
+    """A truncated write during a crash must not make every earlier thread
+    unreadable.
+    """
+    outbox = tmp_path / "outbox.jsonl"
+    agent = Agent(
+        gabo._http, handle=gabo.handle, label="hermes",
+        keypair=gabo._keypair, outbox_path=outbox,
+    )
+    agent.send(to=f"welcome@doorslip.test", state={"topic": "hello"}, prose="hi")
+    with outbox.open("a", encoding="utf-8") as broken:
+        broken.write('{"half a line\n')
+
+    assert len(agent.sent()) == 1

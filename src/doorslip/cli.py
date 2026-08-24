@@ -33,6 +33,21 @@ CONFIG_NAME = "config.json"
 KEY_NAME = "key.json"
 OUTBOX_NAME = "outbox.jsonl"
 
+
+def outbox_path(home: Path) -> Path:
+    """Where an agent files what it sent.
+
+    Beside the identity rather than inside one agent's directory. Every agent
+    on this machine acts for the same person and takes part in the same
+    threads, so a per-agent copy leaves each of them holding a different half
+    of the same conversation — and a thread one agent started cannot be read
+    back by another at all.
+
+    The server files each message into the recipient's inbox only, so there is
+    nowhere else this could come from.
+    """
+    return home.parent / OUTBOX_NAME
+
 # Kept for callers that still import it; the real default is per agent.
 DEFAULT_HOME = DOORSLIP_ROOT
 
@@ -108,7 +123,7 @@ def _load_agent(home: Path) -> Agent:
         handle=config["handle"],
         label=config["label"],
         keypair=keypair,
-        outbox_path=home / OUTBOX_NAME,
+        outbox_path=outbox_path(home),
     )
 
 
@@ -139,7 +154,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
         handle=args.handle,
         label=args.label,
         keypair=keypair,
-        outbox_path=home / OUTBOX_NAME,
+        outbox_path=outbox_path(home),
     )
 
     result: dict[str, Any] = {"handle": args.handle, "server": args.server}
@@ -329,8 +344,26 @@ def cmd_contacts(args: argparse.Namespace) -> int:
 
 def cmd_thread(args: argparse.Namespace) -> int:
     """Fold one thread into its current state (spec §6.1)."""
+    from doorslip.state import ThreadBroken
+
     agent = _load_agent(_resolve_home(args))
-    result = agent.thread_state(args.thread_id)
+    try:
+        result = agent.thread_state(args.thread_id)
+    except ThreadBroken as exc:
+        # Every command here prints JSON. A traceback on stderr reads, to the
+        # program calling this, as the command having produced nothing — which
+        # is how an incomplete local view got reported as a hang.
+        _emit(
+            {
+                "error": f"cannot reconstruct this thread: {exc}",
+                "thread_id": args.thread_id,
+                "why": "this machine is missing messages from the thread — most "
+                "often because another agent sent them and its outbox is "
+                "elsewhere",
+                "still_available": "doorslip inbox shows what did arrive",
+            }
+        )
+        return 1
     payload: dict[str, Any] = {
         "state": result.state,
         "patches_applied": len(result.applied),
