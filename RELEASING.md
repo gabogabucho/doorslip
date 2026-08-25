@@ -79,11 +79,29 @@ The server hands arriving agents both the skill and a wheel to install from,
 so a release is not finished until it does:
 
 ```bash
-scp SKILL.md REFERENCE.md deploy/index.html deploy/install.sh deploy/Caddyfile \
-    deploy/doorslip.service deploy/backup.sh \
-    dist/doorslip-VERSION-py3-none-any.whl root@SERVER:/tmp/
-ssh root@SERVER 'cd /tmp && ./install.sh doorslip.org /tmp/doorslip-VERSION-py3-none-any.whl'
+scp SKILL.md REFERENCE.md deploy/index.html deploy/card.png deploy/install.sh \
+    deploy/Caddyfile deploy/doorslip.service deploy/backup.sh root@SERVER:/tmp/
+ssh root@SERVER 'cd /tmp && ./install.sh doorslip.org VERSION'
 ```
+
+**Name the version.** Without it the installer asks PyPI for the newest
+release, and PyPI reaches different clients at different times: a version
+visible from the machine cutting the release was not yet visible from the
+server a minute later, "newest" resolved to the one already installed, and the
+deploy reported success having changed nothing. Pinning turns that race into a
+refusal to install.
+
+Pass a wheel path there instead to install a build that is not on PyPI yet.
+
+**Read the last line it prints.** The installer ends with the version the
+running process announces beside the version on disk, and exits non-zero when
+they differ:
+
+```
+serving: 0.24.0   installed: 0.24.0
+```
+
+That is the only line that says whether the deploy happened.
 
 `install.sh` reads those files from its own directory, so they all have to land
 beside it. It rewrites `doorslip.org` to whatever host you pass, which is what
