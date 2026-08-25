@@ -79,7 +79,12 @@ if [[ -n "$LOCAL_WHEEL" ]]; then
 	"$APP_DIR/venv/bin/pip" install --quiet --upgrade --force-reinstall "$LOCAL_WHEEL"
 else
 	echo "==> installing doorslip from PyPI"
-	"$APP_DIR/venv/bin/pip" install --quiet --upgrade doorslip
+	# --no-cache-dir because pip caches the index it read, not only the
+	# wheels. Twice now a release was on PyPI, this line reported success,
+	# and the service kept serving the previous version - the same silent
+	# no-op RELEASING.md opens by warning about, arriving through a different
+	# door. A deploy that does nothing must not look like a deploy.
+	"$APP_DIR/venv/bin/pip" install --quiet --no-cache-dir --upgrade doorslip
 fi
 
 echo "==> writing the service unit"
@@ -153,12 +158,25 @@ systemctl enable doorslip
 systemctl restart doorslip
 systemctl restart caddy
 
+INSTALLED="$("$APP_DIR/venv/bin/pip" show doorslip 2>/dev/null | awk '/^Version:/{print $2}')"
+
 echo
 echo "waiting for a certificate and a first response..."
 for _ in $(seq 1 30); do
-	if curl -fsS "https://$HOST/nonce?pubkey=probe" >/dev/null 2>&1; then
+	if curl -fsS "https://$HOST/nonce?pubkey=probe" >/tmp/doorslip-probe 2>/dev/null; then
+		# Report the version the running process announces, not the one on
+		# disk. Those parted company twice: pip reported success while the
+		# service kept serving what it had, and nothing said so. A deploy has
+		# to end by naming what is actually answering.
+		SERVING="$(sed -n 's/.*"client":"\([^"]*\)".*/\1/p' /tmp/doorslip-probe)"
 		echo "up: https://$HOST"
+		echo "serving: ${SERVING:-unknown}   installed: ${INSTALLED:-unknown}"
 		echo "welcome desk: welcome@$HOST"
+		rm -f /tmp/doorslip-probe
+		if [[ -n "$SERVING" && -n "$INSTALLED" && "$SERVING" != "$INSTALLED" ]]; then
+			echo "the running server is not what is installed; it did not restart cleanly" >&2
+			exit 1
+		fi
 		exit 0
 	fi
 	sleep 2
