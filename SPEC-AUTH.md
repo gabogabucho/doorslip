@@ -1,24 +1,25 @@
 # doorslip-auth-v1 — the authenticated request
 
-Status: **proposed**, not implemented. Addresses DS-05 of the August 2026
-coordinated review by Daniel Gamino.
+Status: **implemented for 0.28.0**. Addresses DS-05 of the August 2026
+coordinated review by Daniel Gamino. The bounded legacy verifier remains for
+0.28.0 only and is removed in **0.29.0**.
 
 This is the first piece of the English specification. Written to the standard
 `CONTRIBUTING.md` asks for: somebody should be able to implement this without
 talking to the author, and two implementations that follow it must agree on
 every byte.
 
-## What is wrong today
+## What the change fixes
 
-`build_credential` signs the nonce and nothing else:
+Before 0.28.0, `build_credential` signed the nonce and nothing else:
 
 ```
 signature = Ed25519(nonce)
 header    = pubkey "." nonce "." signature
 ```
 
-The signature proves possession of a key and says nothing about what the key
-was asked to do. A credential observed before its single use can be replayed
+That signature proves possession of a key and says nothing about what the key
+was asked to do. A credential observed before its single use could be replayed
 against a different endpoint with a different body — `POST /contacts` with
 `{"remove": …}` instead of the `GET /inbox` it was minted for. TLS narrows the
 exposure to a proxy, a log or a misconfigured plain-HTTP deployment; it does
@@ -76,6 +77,9 @@ A target containing CR, LF, or any octet outside `0x21`–`0x7E` is **rejected**
 by both sides rather than normalised. Normalising is how two implementations
 sign different bytes for the same request.
 
+A literal `#` is also rejected anywhere in `TARGET`: origin-form has no
+fragment. Percent-encoded `%23` is not a fragment delimiter and remains valid.
+
 #### A trailing `?` with an empty query is outside the profile
 
 `GET /x?` and `GET /x` are indistinguishable at the ASGI boundary. Measured on
@@ -127,6 +131,19 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 There is no sentinel and no special case, because a special case is a thing
 one implementation forgets.
+
+### Operational pre-authentication body limit
+
+The reference server limits request bodies on endpoints protected by
+`X-Doorslip-Auth` to 64 KiB (65,536 bytes). It reads the ASGI body stream
+incrementally and returns HTTP 413 as soon as the accumulated bytes exceed the
+limit, before signature verification, legacy fallback, handler execution, or
+nonce consumption. `Content-Length` is not trusted to enforce this limit.
+
+This is an operational resource bound, not a change to the cryptographic frame:
+`BODY-SHA256` still covers every exact body byte of each accepted request. The
+accepted bytes are cached unchanged so an endpoint that subsequently reads its
+body receives the same bytes that were authenticated.
 
 ## The header
 
@@ -280,14 +297,17 @@ announced rather than sudden.
    client that quietly retries with the legacy signature after a rejection
    hands an attacker the downgrade for free.
 
-3. **The server verifies v1 first and legacy second**, for one release.
+3. **The server validates the request profile, then verifies v1 first and
+   legacy second**, for release 0.28.0. An out-of-profile method, target, or
+   body is rejected before either verifier and cannot fall through to legacy.
 
 4. **Legacy use is logged** as an `event_log` row recording the pubkey and the
    scheme. Never the nonce and never the signature: a log that holds
    credential material is a second copy of the thing being protected.
 
-5. **The release that removes nonce-only verification is named when the
-   window opens**, not decided later. A deprecation without a date does not
-   expire.
+5. **Release 0.29.0 removes nonce-only verification.** The release is named
+   while the 0.28.0 window opens, not decided later. A deprecation without a
+   date does not expire. Until removal, `/nonce` also advertises this boundary
+   as `"nonce_only_removal": "0.29.0"`.
 
 The instance is small enough to watch that log go quiet before cutting.

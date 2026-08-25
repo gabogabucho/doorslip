@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from doorslip.api import create_app
+from doorslip.auth import AUTH_NONCE_ONLY, AUTH_V1, LEGACY_AUTH_REMOVAL_RELEASE
 from doorslip.client import Agent
 from doorslip.crypto import generate_keypair
 from doorslip.envelope import VERSION as ENVELOPE_VERSION
@@ -31,6 +32,12 @@ def test_the_nonce_reply_says_what_the_server_speaks(http):
     assert payload["server"]["protocol"] == ENVELOPE_VERSION
     assert payload["server"]["client"]
     assert payload["server"]["skill"].endswith("/skill.md")
+    assert payload["server"]["auth"] == [AUTH_V1, AUTH_NONCE_ONLY]
+    assert payload["server"]["nonce_only_removal"] == LEGACY_AUTH_REMOVAL_RELEASE
+
+
+def test_the_legacy_window_has_an_exact_next_release_boundary():
+    assert LEGACY_AUTH_REMOVAL_RELEASE == "0.29.0"
 
 
 def test_the_protocol_version_matches_what_envelopes_carry(http):

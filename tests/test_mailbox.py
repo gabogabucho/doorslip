@@ -246,11 +246,7 @@ def test_you_cannot_acknowledge_someone_elses_message(gabo, tomas):
 
 def test_a_revoked_key_can_no_longer_send(gabo, tomas, http):
     _introduce(gabo, tomas)
-    http.post(
-        "/revoke-key",
-        json={"pubkey": gabo.pubkey},
-        headers=gabo._auth_headers(),
-    )
+    gabo.revoke(gabo.pubkey)
 
     with pytest.raises(ProtocolError) as caught:
         gabo.send(to=tomas.handle, state={}, prose="still here?")
@@ -263,7 +259,7 @@ def test_revocation_does_not_erase_messages_already_received(gabo, tomas, http):
     _introduce(gabo, tomas)
     gabo.send(to=tomas.handle, state={"topic": "barbecue"}, prose="Saturday?")
 
-    http.post("/revoke-key", json={"pubkey": gabo.pubkey}, headers=gabo._auth_headers())
+    gabo.revoke(gabo.pubkey)
 
     assert len(tomas.inbox()) == 1
 
@@ -322,7 +318,17 @@ def test_a_nonce_cannot_be_used_twice_for_authentication(gabo, http):
     from doorslip.auth import AUTH_HEADER, build_credential
 
     nonce = http.get("/nonce", params={"pubkey": gabo.pubkey}).json()["nonce"]
-    header = {AUTH_HEADER: build_credential(gabo.pubkey, nonce, gabo._keypair.private_key)}
+    header = {
+        AUTH_HEADER: build_credential(
+            gabo.pubkey,
+            nonce,
+            gabo._keypair.private_key,
+            method="POST",
+            raw_path=b"/invite",
+            query_string=b"",
+            body=b"",
+        )
+    }
 
     assert http.post("/invite", headers=header).status_code == 201
     assert http.post("/invite", headers=header).status_code == 401
@@ -337,7 +343,15 @@ def test_an_unregistered_key_cannot_authenticate(http):
     response = http.post(
         "/invite",
         headers={
-            AUTH_HEADER: build_credential(stranger.public_key, nonce, stranger.private_key)
+            AUTH_HEADER: build_credential(
+                stranger.public_key,
+                nonce,
+                stranger.private_key,
+                method="POST",
+                raw_path=b"/invite",
+                query_string=b"",
+                body=b"",
+            )
         },
     )
 
@@ -352,7 +366,17 @@ def test_a_credential_signed_by_the_wrong_key_is_refused(gabo, http):
 
     response = http.post(
         "/invite",
-        headers={AUTH_HEADER: build_credential(gabo.pubkey, nonce, impostor.private_key)},
+        headers={
+            AUTH_HEADER: build_credential(
+                gabo.pubkey,
+                nonce,
+                impostor.private_key,
+                method="POST",
+                raw_path=b"/invite",
+                query_string=b"",
+                body=b"",
+            )
+        },
     )
 
     assert response.status_code == 401
@@ -469,7 +493,7 @@ def test_a_revoked_agent_frees_a_slot(gabo, http):
     extra = [m for m in gabo.inbox()]
     assert extra  # notices arrived
 
-    http.post("/revoke-key", json={"pubkey": gabo.pubkey}, headers=gabo._auth_headers())
+    gabo.revoke(gabo.pubkey)
 
     # Gabo's own key is gone, but the mailbox now has a free slot again.
     assert http.get("/nonce", params={"pubkey": gabo.pubkey}).status_code == 200
