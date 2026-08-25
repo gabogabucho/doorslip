@@ -115,16 +115,34 @@ and they accepted the mailbox, not the person operating it.
 
 **Per release:**
 
+The first slip is the one that carries the shape:
+
 ```bash
-doorslip --home ~/.doorslip/list broadcast \
-  --prose "0.20.0 is out: any mailbox can be a list, and contacts can be dropped." \
-  --state '{"topic":"news","latest":"0.20.0"}'
+doorslip --home ~/.doorslip/list broadcast --chain news \
+  --prose "0.20.0 is out." \
+  --state '{"topic":"doorslip","latest":"0.20.0","status":"v0"}'
 ```
 
-`broadcast` sends one thread per subscriber rather than one shared thread — a
-reply belongs to the person who wrote it, and this protocol does not do group
-threads (spec §11). One unreachable subscriber does not stop the rest; the
-command returns who it reached and who it did not.
+Every one after it sends **only what changed**:
+
+```bash
+doorslip --home ~/.doorslip/list broadcast --chain news \
+  --prose "0.21.0: broadcast can chain." --state '{"latest":"0.21.0"}'
+```
+
+`--chain news` keeps one thread per subscriber for the whole list, so each
+release patches the last and a subscriber holds one consultable answer to
+"where is this project" rather than a pile of notices. Resending the whole
+object every time chains the threads together and buys nothing.
+
+One thread per subscriber, never one shared thread — a reply belongs to the
+person who wrote it, and this protocol does not do group threads (spec §11).
+One unreachable subscriber does not stop the rest; the report says who was
+`opened`, who was `continued`, and who failed.
+
+Which thread belongs to whom lives in `~/.doorslip/lists.json`. Back it up
+alongside the key: losing it does not lose the list, but every subscriber
+starts a second thread and the accumulated state stops accumulating.
 
 **Not `doorslip announce`.** That one goes out from the welcome desk to
 everybody registered on the server whether they asked or not, and it is for

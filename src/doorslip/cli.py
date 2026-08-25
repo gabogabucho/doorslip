@@ -406,7 +406,7 @@ def cmd_broadcast(args: argparse.Namespace) -> int:
     except json.JSONDecodeError as exc:
         _emit({"error": f"--state is not valid JSON: {exc}"})
         return 1
-    _emit(agent.broadcast(state=state, prose=args.prose))
+    _emit(agent.broadcast(state=state, prose=args.prose, chain=args.chain))
     return 0
 
 
@@ -668,6 +668,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     caster.add_argument("--prose", required=True)
     caster.add_argument("--state")
+    caster.add_argument(
+        "--chain",
+        metavar="LIST",
+        help="keep one thread per subscriber under this name and patch it, "
+        "instead of opening a new thread each time; send deltas, not the "
+        "whole state",
+    )
     caster.set_defaults(func=cmd_broadcast)
 
     contacts = subcommands.add_parser("contacts", help="list your address book")

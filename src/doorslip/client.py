@@ -26,7 +26,13 @@ from typing import Any, Protocol
 from doorslip.auth import AUTH_HEADER, build_credential
 from doorslip.crypto import KeyPair, generate_keypair
 from doorslip.envelope import build, seal
-from doorslip.state import Reconstruction, reconstruct
+from doorslip.state import Reconstruction, ThreadBroken, reconstruct
+
+# Which thread belongs to which subscriber, for a list that chains. Beside the
+# outbox rather than inside one agent's directory, for the same reason the
+# outbox is: every agent of this person acts for the same mailbox, and a list
+# one of them started must be continuable by another.
+LISTS_NAME = "lists.json"
 
 
 class HttpClient(Protocol):
@@ -244,22 +250,156 @@ class Agent:
             )
         )
 
-    def broadcast(self, *, state: dict[str, Any], prose: str) -> dict[str, Any]:
+    def broadcast(
+        self, *, state: dict[str, Any], prose: str, chain: str | None = None
+    ) -> dict[str, Any]:
         """Send the same slip to everybody in this address book.
 
-        One thread each rather than one shared thread: a reply belongs to the
-        person who wrote it, and a group thread is not something this protocol
-        does (spec §11).
+        One thread per subscriber rather than one shared thread, either way: a
+        reply belongs to the person who wrote it, and a group thread is not
+        something this protocol does (spec §11).
+
+        What `chain` changes is whether those threads are reused. Without it
+        every broadcast opens a new one, which is right for announcements that
+        each stand alone. With it the subscriber keeps a single thread for the
+        whole list and every slip patches the one before, so what they hold is
+        one reconstructable answer to "where is this project" instead of ten
+        loose notices.
+
+        That is the shape a project wants and a feed of announcements does
+        not, which is why it is the list owner's decision and not a default.
+        It only pays off if the slips carry deltas — `{"latest": "0.21.0"}`
+        rather than the whole object every time. Resending the full state
+        chains threads together and buys nothing.
         """
-        sent, failed = [], {}
+        threads = self._list_threads(chain) if chain else {}
+        tips = self._tips(set(threads.values()))
+
+        sent: list[str] = []
+        failed: dict[str, str] = {}
+        opened: list[str] = []
+
         for handle in self.contacts():
+            thread_id = threads.get(handle)
+            parent = tips.get(thread_id) if thread_id else None
+            if thread_id is not None and parent is None:
+                # A thread we recorded but cannot find the end of. Sending
+                # into it without a parent would add a second root and make
+                # the thread unreconstructable for both sides; a fresh thread
+                # loses the accumulated state but stays readable.
+                thread_id = None
+
             try:
-                self.send(to=handle, state=dict(state), prose=prose)
-                sent.append(handle)
+                receipt = self.send(
+                    to=handle,
+                    state=dict(state),
+                    prose=prose,
+                    thread_id=thread_id,
+                    parent_message_id=parent,
+                )
             except ProtocolError as exc:
                 # One unreachable subscriber must not stop the rest.
                 failed[handle] = exc.detail
-        return {"sent": sent, "failed": failed}
+                continue
+
+            sent.append(handle)
+            if chain and thread_id is None:
+                threads[handle] = receipt["thread_id"]
+                opened.append(handle)
+
+        if chain and opened:
+            self._save_list_threads(chain, threads)
+
+        report: dict[str, Any] = {"sent": sent, "failed": failed}
+        if chain:
+            report["list"] = chain
+            report["opened"] = opened
+            report["continued"] = [h for h in sent if h not in opened]
+        return report
+
+    def _tips(self, thread_ids: set[str]) -> dict[str, str]:
+        """Where each thread currently ends.
+
+        The end of the reconstructed chain, not the last thing we sent. Those
+        differ the moment a subscriber answers, and chaining onto our own
+        message instead would place the next slip beside their reply — two
+        messages naming one parent, which is a divergence (spec §6.1). It
+        would be reported for good, on every thread anybody ever replied to,
+        and the list would look broken to the people using it most.
+
+        Resolved for the whole batch in one pass. Asking `thread_state` per
+        subscriber would re-download the same inbox once per person.
+        """
+        if not thread_ids:
+            return {}
+
+        by_thread: dict[str, dict[str, dict[str, Any]]] = {}
+        for message in self.inbox():
+            if message["thread_id"] in thread_ids:
+                envelope = message["envelope"]
+                by_thread.setdefault(message["thread_id"], {})[
+                    envelope["message_id"]
+                ] = envelope
+        for envelope in self.sent():
+            if envelope["thread_id"] in thread_ids:
+                by_thread.setdefault(envelope["thread_id"], {})[
+                    envelope["message_id"]
+                ] = envelope
+
+        tips: dict[str, str] = {}
+        for thread_id, envelopes in by_thread.items():
+            try:
+                applied = reconstruct(list(envelopes.values())).applied
+            except ThreadBroken:
+                # This machine is missing part of the thread. Falling back to
+                # the newest message we do know puts the slip somewhere
+                # readable, and if it lands beside something we never saw the
+                # result is a reported divergence rather than silence.
+                #
+                # Timestamps are the sender's and are not an ordering anywhere
+                # else in this protocol. They are used here because the chain
+                # that would have answered the question is the broken thing.
+                newest = max(envelopes.values(), key=lambda e: e.get("timestamp") or "")
+                applied = [newest["message_id"]]
+            if applied:
+                tips[thread_id] = applied[-1]
+        return tips
+
+    # -- list bookkeeping -------------------------------------------------
+
+    def _lists_path(self) -> Path | None:
+        if self._outbox_path is None:
+            return None
+        return self._outbox_path.parent / LISTS_NAME
+
+    def _read_lists(self) -> dict[str, dict[str, str]]:
+        path = self._lists_path()
+        if path is None or not path.exists():
+            return {}
+        try:
+            book = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            # An unreadable book costs the threading, never the broadcast:
+            # every subscriber gets a fresh thread and the list keeps working.
+            return {}
+        return book if isinstance(book, dict) else {}
+
+    def _list_threads(self, name: str | None) -> dict[str, str]:
+        if name is None:
+            return {}
+        threads = self._read_lists().get(name)
+        return dict(threads) if isinstance(threads, dict) else {}
+
+    def _save_list_threads(self, name: str, threads: dict[str, str]) -> None:
+        path = self._lists_path()
+        if path is None:
+            return
+        book = self._read_lists()
+        book[name] = threads
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(book, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     def contacts(self) -> list[str]:
         payload = _unwrap(self._http.get("/contacts", headers=self._auth_headers()))

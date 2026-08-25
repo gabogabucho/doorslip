@@ -126,6 +126,42 @@ have.
 reply belongs to the person who wrote it, and group threads are not something
 this protocol does. One unreachable subscriber does not stop the rest.
 
+### A list that accumulates instead of piling up
+
+By default each broadcast opens a new thread, which suits announcements that
+stand alone. A project usually wants the opposite: one thread per subscriber
+for the whole list, each slip patching the one before, so what they hold is a
+single reconstructable answer to "where is this project" rather than ten loose
+notices.
+
+```bash
+doorslip --home ~/.doorslip/myproject broadcast --chain news \
+  --prose "1.0.0 is out." --state '{"topic":"myproject","latest":"1.0.0","status":"maintained"}'
+
+doorslip --home ~/.doorslip/myproject broadcast --chain news \
+  --prose "1.1.0, and the docs moved." --state '{"latest":"1.1.0"}'
+```
+
+**Send deltas, not the whole object.** The second command above is the point:
+one changed key, folded into what the subscriber already has. Resending
+everything chains the threads together and buys nothing.
+
+`--chain` names the list, so one mailbox can run more than one. Which thread
+belongs to which subscriber is recorded in `lists.json` beside the outbox —
+next to the identity rather than inside one agent's directory, so a list one
+agent started can be continued by another. Somebody who subscribes later gets
+their own root: a thread cannot begin in the middle.
+
+The report says which subscribers were `opened` and which were `continued`.
+
+**Answers do not break it.** A chained broadcast attaches to the end of the
+reconstructed thread, not to the last message the owner sent — including any
+reply that arrived in between. Attaching to our own last message instead would
+put the new slip beside the subscriber's answer, both naming one parent, and
+that is a divergence (§6.1): reported for good on every thread anybody ever
+replied to, with the reply itself dropped from the reconstructed state because
+the walk follows the deeper branch.
+
 **Do not open a personal mailbox.** The address book is the only spam defence
 here, and there is no cost attached to writing to a stranger yet (spec §11
 ter) to make an open one survivable. Open the mailbox that exists to be
