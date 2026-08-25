@@ -31,7 +31,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Lock, RLock
 from typing import Any
+from weakref import WeakValueDictionary
 
 from doorslip.identity import AgentRecord
 
@@ -83,7 +85,10 @@ RECOMMENDED_STATE_KEYS = frozenset(
     {"topic", "status", "when", "where", "who", "budget", "constraints", "tasks"}
 )
 
-SCHEMA = """
+# The active-agent triggers are installed once per database. The Python constant
+# feeds new databases and the matching application check; changing the limit in
+# a future release also requires an explicit trigger migration for existing DBs.
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS human (
     id                  TEXT PRIMARY KEY,
     handle              TEXT NOT NULL UNIQUE,
@@ -165,6 +170,27 @@ CREATE INDEX IF NOT EXISTS idx_message_recipient ON message(to_human_id, created
 CREATE INDEX IF NOT EXISTS idx_message_thread    ON message(thread_id);
 CREATE INDEX IF NOT EXISTS idx_agent_human       ON agent(human_id);
 CREATE INDEX IF NOT EXISTS idx_event_kind        ON event_log(kind, created_at);
+
+CREATE TRIGGER IF NOT EXISTS agent_active_limit_insert
+BEFORE INSERT ON agent
+WHEN NEW.revoked_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM human WHERE id = NEW.human_id AND is_welcome = 1)
+ AND (SELECT COUNT(*) FROM agent
+       WHERE human_id = NEW.human_id AND revoked_at IS NULL) >= {MAX_AGENTS_PER_HUMAN}
+BEGIN
+    SELECT RAISE(ABORT, 'active agent limit exceeded');
+END;
+
+CREATE TRIGGER IF NOT EXISTS agent_active_limit_update
+BEFORE UPDATE OF human_id, revoked_at ON agent
+WHEN NEW.revoked_at IS NULL
+ AND (OLD.revoked_at IS NOT NULL OR OLD.human_id != NEW.human_id)
+ AND NOT EXISTS (SELECT 1 FROM human WHERE id = NEW.human_id AND is_welcome = 1)
+ AND (SELECT COUNT(*) FROM agent
+       WHERE human_id = NEW.human_id AND revoked_at IS NULL) >= {MAX_AGENTS_PER_HUMAN}
+BEGIN
+    SELECT RAISE(ABORT, 'active agent limit exceeded');
+END;
 """
 
 
@@ -240,6 +266,66 @@ class StoredMessage:
     created_at: str
 
 
+class _SerializedConnection:
+    """Serialize access to one connection shared by request threads."""
+
+    def __init__(self, connection: sqlite3.Connection, lock: RLock):
+        self._connection = connection
+        self._lock = lock
+
+    def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:
+        with self._lock:
+            return self._connection.execute(sql, parameters)
+
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:
+        with self._lock:
+            return self._connection.executescript(sql_script)
+
+    def __enter__(self) -> _SerializedConnection:
+        self._lock.acquire()
+        try:
+            self._connection.__enter__()
+        except BaseException:
+            self._lock.release()
+            raise
+        return self
+
+    def __exit__(self, *args: Any) -> bool | None:
+        try:
+            return self._connection.__exit__(*args)
+        finally:
+            self._lock.release()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+
+_CONNECTIONS_LOCK = Lock()
+_SERIALIZED_CONNECTIONS: WeakValueDictionary[int, _SerializedConnection] = (
+    WeakValueDictionary()
+)
+
+
+def _serialized(connection: sqlite3.Connection | _SerializedConnection) -> _SerializedConnection:
+    """Return the one synchronization boundary for a raw SQLite connection.
+
+    More than one ``Store`` may wrap the same connection during an in-process
+    restart.  A lock owned by each Store would let those wrappers interleave
+    transactions on the same connection, so wrappers are shared by connection
+    identity while any Store still holds one.
+    """
+    if isinstance(connection, _SerializedConnection):
+        return connection
+    key = id(connection)
+    with _CONNECTIONS_LOCK:
+        current = _SERIALIZED_CONNECTIONS.get(key)
+        if current is not None and current._connection is connection:
+            return current
+        current = _SerializedConnection(connection, RLock())
+        _SERIALIZED_CONNECTIONS[key] = current
+        return current
+
+
 class Store:
     """The directory and the mailboxes.
 
@@ -248,8 +334,22 @@ class Store:
     `identity.verify_sender`, which this class feeds through `find_agent`.
     """
 
-    def __init__(self, connection: sqlite3.Connection):
-        self._db = connection
+    def __init__(self, connection: sqlite3.Connection | _SerializedConnection):
+        self._db = _serialized(connection)
+        self._transaction_lock = self._db._lock
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """Run an explicit transaction without shared-connection interleaving."""
+        with self._transaction_lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+                self._db.execute("COMMIT")
+            except BaseException:
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
+                raise
 
     # -- identity ---------------------------------------------------------
 
@@ -383,35 +483,52 @@ class Store:
         """Attach a new agent key to the identity that issued the code."""
         if not code.startswith(ENROLL_PREFIX):
             raise InviteInvalid("not an enrolment code")
-        if self.find_agent(pubkey) is not None:
-            raise KeyAlreadyRegistered(pubkey)
 
-        row = self._db.execute(
-            "SELECT human_id, scope FROM enroll_code"
-            " WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?",
-            (code, _now_text()),
-        ).fetchone()
-        if row is None:
-            raise InviteInvalid("unknown, expired or already redeemed")
+        try:
+            with self._transaction():
+                if self.find_agent(pubkey) is not None:
+                    raise KeyAlreadyRegistered(pubkey)
 
-        # The scope rides on the code, so the joining agent cannot ask for
-        # more than the person who minted it decided to hand over.
-        human_id, scope = row[0], row[1] or SCOPE_FULL
-        if self.count_active_agents(human_id) >= MAX_AGENTS_PER_HUMAN:
-            raise TooManyAgents(f"already at {MAX_AGENTS_PER_HUMAN} active agents")
+                now = _now_text()
+                row = self._db.execute(
+                    "SELECT human_id, scope FROM enroll_code"
+                    " WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?",
+                    (code, now),
+                ).fetchone()
+                if row is None:
+                    raise InviteInvalid("unknown, expired or already redeemed")
 
-        moment = _now_text()
-        with self._db:
-            self._db.execute(
-                "UPDATE enroll_code SET redeemed_at = ? WHERE code = ? AND redeemed_at IS NULL",
-                (moment, code),
-            )
-            self._db.execute(
-                "INSERT INTO agent (id, human_id, label, pubkey, scope, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), human_id, label, pubkey, scope, moment),
-            )
-        self.log("enroll", pubkey=pubkey, human_id=human_id, detail=f"{label} ({scope})")
+                # The scope rides on the code, so the joining agent cannot ask
+                # for more than the person who minted it decided to hand over.
+                human_id, scope = row[0], row[1] or SCOPE_FULL
+                if self.count_active_agents(human_id) >= MAX_AGENTS_PER_HUMAN:
+                    raise TooManyAgents(
+                        f"already at {MAX_AGENTS_PER_HUMAN} active agents"
+                    )
+
+                moment = _now_text()
+                changed = self._db.execute(
+                    "UPDATE enroll_code SET redeemed_at = ?"
+                    " WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?",
+                    (moment, code, moment),
+                ).rowcount
+                if changed != 1:
+                    raise InviteInvalid("unknown, expired or already redeemed")
+                self._db.execute(
+                    "INSERT INTO agent (id, human_id, label, pubkey, scope, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), human_id, label, pubkey, scope, moment),
+                )
+        except sqlite3.IntegrityError as exc:
+            if "active agent limit exceeded" in str(exc):
+                raise TooManyAgents(
+                    f"already at {MAX_AGENTS_PER_HUMAN} active agents"
+                ) from exc
+            raise
+
+        self.log(
+            "enroll", pubkey=pubkey, human_id=human_id, detail=f"{label} ({scope})"
+        )
         human = self.human_by_id(human_id)
         assert human is not None  # FK guarantees it
         return human
@@ -604,26 +721,32 @@ class Store:
         if not code.startswith(INVITE_PREFIX):
             raise InviteInvalid("not an invitation code")
 
-        row = self._db.execute(
-            "SELECT issuer_human_id FROM invite_code"
-            " WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?",
-            (code, _now_text()),
-        ).fetchone()
-        if row is None:
-            raise InviteInvalid("unknown, expired or already redeemed")
+        with self._transaction():
+            now = _now_text()
+            row = self._db.execute(
+                "SELECT issuer_human_id FROM invite_code"
+                " WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?",
+                (code, now),
+            ).fetchone()
+            if row is None:
+                raise InviteInvalid("unknown, expired or already redeemed")
 
-        issuer_id = row[0]
-        if issuer_id == accepting_human_id:
-            raise InviteInvalid("cannot redeem your own invitation")
+            issuer_id = row[0]
+            if issuer_id == accepting_human_id:
+                raise InviteInvalid("cannot redeem your own invitation")
 
-        moment = _now_text()
-        with self._db:
-            self._db.execute(
+            moment = _now_text()
+            changed = self._db.execute(
                 "UPDATE invite_code SET redeemed_at = ?, redeemed_by_human_id = ?"
-                " WHERE code = ? AND redeemed_at IS NULL",
-                (moment, accepting_human_id, code),
-            )
-            for owner, peer in ((issuer_id, accepting_human_id), (accepting_human_id, issuer_id)):
+                " WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?",
+                (moment, accepting_human_id, code, moment),
+            ).rowcount
+            if changed != 1:
+                raise InviteInvalid("unknown, expired or already redeemed")
+            for owner, peer in (
+                (issuer_id, accepting_human_id),
+                (accepting_human_id, issuer_id),
+            ):
                 self._db.execute(
                     "INSERT OR IGNORE INTO contact"
                     " (id, owner_human_id, peer_human_id, created_at)"
