@@ -28,8 +28,21 @@ jobs:
       - name: install
         run: uv sync --extra dev --python ${{ matrix.python }}
 
+      # The proxy test is the only check that can catch a reverse proxy
+      # rewriting request targets, which is the failure doorslip-auth-v1
+      # accepts in exchange for having no canonicalisation. It skips itself
+      # when Caddy is absent, so without this step it ran only where somebody
+      # happened to have Caddy installed - which is a test that stops running.
+      - name: caddy
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.8.4/caddy_2.8.4_linux_amd64.tar.gz"             | sudo tar -xz -C /usr/local/bin caddy
+          caddy version
+
       - name: tests
-        run: uv run pytest -q
+        # -rs so a skip is visible in the log rather than a dot. A proxy test
+        # that quietly stops running is worse than one that fails.
+        run: uv run pytest -q -rs
 
   demo:
     # The suite proves the pieces; this proves they add up. It runs the whole
