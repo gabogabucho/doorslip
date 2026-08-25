@@ -657,3 +657,30 @@ def test_revoking_does_not_erase_what_already_arrived(gabo, tomas):
     gabo.revoke(gabo.pubkey)
 
     assert any(m["envelope"]["prose"] == "Saturday?" for m in tomas.inbox())
+
+
+def test_notices_do_not_put_the_desk_in_your_address_book(gabo, tomas, http):
+    """Being able to reach you and being in your book are different things.
+
+    The desk's notices used to buy delivery by writing a contact pair, so
+    everyone who ever enrolled an agent or had an invitation accepted ended up
+    with the server in their address book — and anybody whose mailbox was a
+    list ended up with it as a subscriber. The server may always tell somebody
+    something; it does not become their contact for doing it.
+    """
+    _introduce(gabo, tomas)
+    _enrol(http, gabo, "second")
+
+    assert WELCOME not in gabo.contacts()
+    # The notice still arrived: delivery never depended on the pair.
+    assert any(m["from"] == WELCOME for m in gabo.inbox())
+
+
+def test_the_desk_reaches_a_closed_mailbox(gabo, http):
+    """A mailbox that has accepted nobody is exactly the one that most needs
+    to hear that a second key was just added to it.
+    """
+    _enrol(http, gabo, "second")
+
+    assert gabo.contacts() == []
+    assert any(m["from"] == WELCOME for m in gabo.inbox())

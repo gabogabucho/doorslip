@@ -409,10 +409,16 @@ def cmd_invite(args: argparse.Namespace) -> int:
 
 
 def cmd_enroll_code(args: argparse.Namespace) -> int:
-    """Mint a code so another of YOUR agents can join this same mailbox."""
+    """Mint a code so another of YOUR agents can join this same mailbox.
+
+    `--scope speak` is the one to reach for when the joining agent publishes
+    on your behalf: it can read, send and broadcast, and cannot drop a
+    subscriber, admit a stranger or revoke your key. The scope is decided
+    here, by you; the joining agent never asks for one.
+    """
     agent = _load_agent(_resolve_home(args))
     try:
-        _emit({"code": agent.enroll_code()})
+        _emit({"code": agent.enroll_code(args.scope), "scope": args.scope})
     except ProtocolError as exc:
         _emit({"error": exc.detail, "status": exc.status})
         return 1

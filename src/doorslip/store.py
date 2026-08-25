@@ -39,6 +39,21 @@ from doorslip.identity import AgentRecord
 # a config file is not a limit.
 MAX_AGENTS_PER_HUMAN = 5
 
+# What a key is allowed to do. Two, not a permission system.
+#
+# The split is between moving messages and changing who may reach you. An
+# agent that publishes needs the first and none of the second, and the
+# difference is not a matter of degree: dropping a subscriber, admitting a
+# stranger or revoking the owner's key are things a human decides, and an
+# agent given them can undo the human's ability to take them back.
+#
+# Eight named permissions was the other design. It is a permission system,
+# and a permission system is a thing people misconfigure. One bit is a
+# decision somebody makes once, at the moment they choose to add an agent.
+SCOPE_FULL = "full"
+SCOPE_SPEAK = "speak"
+SCOPES = (SCOPE_FULL, SCOPE_SPEAK)
+
 # Spec §7.1. Short enough that a stolen nonce is useless, long enough for a
 # round trip over a bad connection.
 NONCE_TTL_SECONDS = 60
@@ -131,6 +146,7 @@ CREATE TABLE IF NOT EXISTS invite_code (
 CREATE TABLE IF NOT EXISTS enroll_code (
     code        TEXT PRIMARY KEY,
     human_id    TEXT NOT NULL REFERENCES human(id),
+    scope       TEXT NOT NULL DEFAULT 'full',
     expires_at  TEXT NOT NULL,
     redeemed_at TEXT,
     created_at  TEXT NOT NULL
@@ -293,16 +309,20 @@ class Store:
         `.well-known` fetch a one-line change when federation arrives.
         """
         row = self._db.execute(
-            "SELECT a.pubkey, h.handle, a.label, a.revoked_at"
+            "SELECT a.pubkey, h.handle, a.label, a.revoked_at, a.scope"
             " FROM agent a JOIN human h ON h.id = a.human_id"
             " WHERE a.pubkey = ?",
             (pubkey,),
         ).fetchone()
         if row is None:
             return None
-        pubkey_, handle, label, revoked_at = row
+        pubkey_, handle, label, revoked_at, scope = row
         return AgentRecord(
-            pubkey=pubkey_, handle=handle, label=label, revoked=revoked_at is not None
+            pubkey=pubkey_,
+            handle=handle,
+            label=label,
+            revoked=revoked_at is not None,
+            scope=scope or SCOPE_FULL,
         )
 
     def agent_id_for(self, pubkey: str) -> str | None:
@@ -333,7 +353,7 @@ class Store:
             self.log("revoke", pubkey=pubkey)
         return changed == 1
 
-    def create_enroll_code(self, human_id: str) -> str:
+    def create_enroll_code(self, human_id: str, scope: str = SCOPE_FULL) -> str:
         """Mint a code that attaches ANOTHER KEY TO THIS SAME IDENTITY (spec §7.3).
 
         Twenty minutes, single use, and a prefix that cannot be mistaken for an
@@ -341,19 +361,22 @@ class Store:
         grants everything — inbox, address book, the ability to sign as this
         person — so it must not survive being pasted into the wrong window.
         """
+        if scope not in SCOPES:
+            raise ValueError(f"unknown scope: {scope!r}")
         code = ENROLL_PREFIX + secrets.token_urlsafe(18)
         with self._db:
             self._db.execute(
-                "INSERT INTO enroll_code (code, human_id, expires_at, created_at)"
-                " VALUES (?, ?, ?, ?)",
+                "INSERT INTO enroll_code (code, human_id, scope, expires_at, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
                 (
                     code,
                     human_id,
+                    scope,
                     (_now() + timedelta(minutes=ENROLL_TTL_MINUTES)).isoformat(),
                     _now_text(),
                 ),
             )
-        self.log("enroll_code", human_id=human_id)
+        self.log("enroll_code", human_id=human_id, detail=scope)
         return code
 
     def redeem_enroll_code(self, code: str, *, pubkey: str, label: str) -> Human:
@@ -364,14 +387,16 @@ class Store:
             raise KeyAlreadyRegistered(pubkey)
 
         row = self._db.execute(
-            "SELECT human_id FROM enroll_code"
+            "SELECT human_id, scope FROM enroll_code"
             " WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?",
             (code, _now_text()),
         ).fetchone()
         if row is None:
             raise InviteInvalid("unknown, expired or already redeemed")
 
-        human_id = row[0]
+        # The scope rides on the code, so the joining agent cannot ask for
+        # more than the person who minted it decided to hand over.
+        human_id, scope = row[0], row[1] or SCOPE_FULL
         if self.count_active_agents(human_id) >= MAX_AGENTS_PER_HUMAN:
             raise TooManyAgents(f"already at {MAX_AGENTS_PER_HUMAN} active agents")
 
@@ -382,11 +407,11 @@ class Store:
                 (moment, code),
             )
             self._db.execute(
-                "INSERT INTO agent (id, human_id, label, pubkey, created_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), human_id, label, pubkey, moment),
+                "INSERT INTO agent (id, human_id, label, pubkey, scope, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), human_id, label, pubkey, scope, moment),
             )
-        self.log("enroll", pubkey=pubkey, human_id=human_id, detail=label)
+        self.log("enroll", pubkey=pubkey, human_id=human_id, detail=f"{label} ({scope})")
         human = self.human_by_id(human_id)
         assert human is not None  # FK guarantees it
         return human
@@ -479,9 +504,10 @@ class Store:
                 "label": row[1],
                 "created_at": row[2],
                 "revoked": row[3] is not None,
+                "scope": row[4] or SCOPE_FULL,
             }
             for row in self._db.execute(
-                "SELECT pubkey, label, created_at, revoked_at FROM agent"
+                "SELECT pubkey, label, created_at, revoked_at, scope FROM agent"
                 " WHERE human_id = ? ORDER BY created_at",
                 (human_id,),
             ).fetchall()
@@ -916,7 +942,28 @@ def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
     db.execute("PRAGMA foreign_keys = ON")
     db.execute("PRAGMA journal_mode = WAL")
     db.executescript(SCHEMA)
+    _migrate(db)
     return db
+
+
+def _migrate(db: sqlite3.Connection) -> None:
+    """Bring a database made by an older release up to the current schema.
+
+    `CREATE TABLE IF NOT EXISTS` leaves an existing table exactly as it is, so
+    a column added to SCHEMA reaches new databases and never the one already
+    holding everybody's messages. Found the day scopes were added: the seed
+    instance would have kept running and failed on the first enrolment.
+
+    Every step is a column addition with a default, which is the only kind of
+    change that is safe to run on every start and safe to run twice.
+    """
+    for table, column, definition in (
+        ("enroll_code", "scope", "TEXT NOT NULL DEFAULT 'full'"),
+        ("agent", "scope", "TEXT NOT NULL DEFAULT 'full'"),
+    ):
+        existing = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 @contextmanager

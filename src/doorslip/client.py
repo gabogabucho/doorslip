@@ -180,13 +180,27 @@ class Agent:
             payload["handle"] = self.handle
         return self._signed_post("/register", payload)
 
-    def enroll_code(self) -> str:
+    def enroll_code(self, scope: str = "full") -> str:
         """Mint a code so another agent can join THIS mailbox (spec §7.3).
 
-        Twenty minutes, single use. It grants everything this identity has, so
-        hand it over directly and never through a channel you do not control.
+        Twenty minutes, single use. A `full` code grants everything this
+        identity has — the inbox, the address book, and the ability to sign as
+        this person — so hand it over directly and never through a channel you
+        do not control.
+
+        `speak` grants reading, sending and broadcasting and nothing that
+        changes who may reach this mailbox. It is the one to mint for an agent
+        that publishes on your behalf: it cannot drop a subscriber, admit a
+        stranger, or revoke your own key.
+
+        The scope is fixed here, when you decide to add the agent. The joining
+        agent never asks for one.
         """
-        return _unwrap(self._http.post("/enroll-code", headers=self._auth_headers()))["code"]
+        return _unwrap(
+            self._http.post(
+                "/enroll-code", json={"scope": scope}, headers=self._auth_headers()
+            )
+        )["code"]
 
     def revoke(self, pubkey: str) -> dict[str, Any]:
         """Stop a key of this identity from sending anything further.

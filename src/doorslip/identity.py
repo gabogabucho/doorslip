@@ -58,6 +58,10 @@ class AgentRecord:
     handle: str
     label: str
     revoked: bool = False
+    # What this key may do. `full` is every key registered before scopes
+    # existed and every key enrolled without narrowing one, so the default
+    # keeps an old directory behaving exactly as it did.
+    scope: str = "full"
 
 
 @dataclass(frozen=True)

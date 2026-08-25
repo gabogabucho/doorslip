@@ -18,6 +18,7 @@ import os
 import re
 import stat
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
@@ -30,6 +31,8 @@ from doorslip.envelope import EnvelopeError, parse
 from doorslip.identity import Rejection, VerifiedSender, verify_sender
 from doorslip.store import (
     ENROLL_PREFIX,
+    SCOPE_FULL,
+    SCOPES,
     MAX_MESSAGES_PER_HOUR,
     INVITE_PREFIX,
     MAX_AGENTS_PER_HUMAN,
@@ -78,6 +81,32 @@ SIGNATURE_HEADER = "X-Doorslip-Signature"
 DEFAULT_WELCOME_HANDLE = "welcome@doorslip.test"
 
 
+@dataclass(frozen=True)
+class Caller:
+    """Who is calling and what their key may do.
+
+    Proxies the human's fields so every handler that already asked for
+    `caller.id` or `caller.handle` keeps reading the same way. The scope is
+    the addition, and it comes from the same lookup as the handle rather than
+    a second query, so the two cannot answer about different keys.
+    """
+
+    human: Human
+    scope: str = SCOPE_FULL
+
+    @property
+    def id(self) -> str:
+        return self.human.id
+
+    @property
+    def handle(self) -> str:
+        return self.human.handle
+
+    @property
+    def is_welcome(self) -> bool:
+        return self.human.is_welcome
+
+
 def create_app(
     store: Store,
     *,
@@ -94,8 +123,13 @@ def create_app(
     app.state.store = store
     app.state.welcome = welcome
 
-    def authenticate(request: Request) -> Human | Response:
-        """Spend a nonce and resolve the caller to a human (spec §7.1)."""
+    def authenticate(request: Request) -> Caller | Response:
+        """Spend a nonce and resolve the caller to a human and a scope (§7.1).
+
+        Both halves matter. The handle says whose mailbox this is; the scope
+        says what this particular key was given leave to do with it, and the
+        two answers come from the same row so they cannot drift apart.
+        """
         credential = parse_credential(request.headers.get(AUTH_HEADER))
         if credential is None:
             return _error(401, f"missing or malformed {AUTH_HEADER}")
@@ -112,7 +146,23 @@ def create_app(
 
         human = store.find_human(record.handle)
         assert human is not None  # the join in find_agent guarantees it
-        return human
+        return Caller(human=human, scope=record.scope)
+
+    def _owner_only(caller: Caller) -> Response | None:
+        """Refuse a key that was enrolled to speak and not to administer.
+
+        These are the operations that change who may reach this mailbox, and
+        an agent holding them can undo its human's ability to take them back:
+        revoking the owner's own key, minting a code that grants everything,
+        admitting a stranger, or dropping a subscriber.
+        """
+        if caller.scope == SCOPE_FULL:
+            return None
+        return _error(
+            403,
+            "this key was enrolled to send and read, not to change who may "
+            "reach this mailbox; ask your human to run this from a full key",
+        )
 
     # -- identity ---------------------------------------------------------
 
@@ -223,7 +273,7 @@ def create_app(
         )
 
     @app.post("/enroll-code")
-    def enroll_code(request: Request) -> Response:
+    async def enroll_code(request: Request) -> Response:
         """Mint a code to attach another agent to your own identity (spec §7.3).
 
         Any active key may enrol, and any may revoke. No hierarchy on purpose:
@@ -233,9 +283,27 @@ def create_app(
         caller = authenticate(request)
         if isinstance(caller, Response):
             return caller
+        refusal = _owner_only(caller)
+        if refusal is not None:
+            return refusal
         if store.count_active_agents(caller.id) >= MAX_AGENTS_PER_HUMAN:
             return _error(409, f"already at {MAX_AGENTS_PER_HUMAN} active agents")
-        return JSONResponse({"code": store.create_enroll_code(caller.id)}, status_code=201)
+
+        # The scope travels on the code, decided by whoever mints it. Letting
+        # the joining agent name its own would make the whole thing a
+        # formality: an agent asking for `full` would get it.
+        raw = await request.body()
+        try:
+            scope = str(_decode_body(raw).get("scope") or SCOPE_FULL) if raw else SCOPE_FULL
+        except ValueError:
+            return _error(400, "body is not valid JSON")
+        if scope not in SCOPES:
+            return _error(400, f"unknown scope {scope!r}; expected one of {list(SCOPES)}")
+
+        return JSONResponse(
+            {"code": store.create_enroll_code(caller.id, scope), "scope": scope},
+            status_code=201,
+        )
 
     @app.post("/revoke-key")
     async def revoke_key(request: Request) -> Response:
@@ -249,6 +317,9 @@ def create_app(
         caller = authenticate(request)
         if isinstance(caller, Response):
             return caller
+        refusal = _owner_only(caller)
+        if refusal is not None:
+            return refusal
 
         try:
             body = _decode_body(await request.body())
@@ -271,6 +342,9 @@ def create_app(
         caller = authenticate(request)
         if isinstance(caller, Response):
             return caller
+        refusal = _owner_only(caller)
+        if refusal is not None:
+            return refusal
         return JSONResponse({"code": store.create_invite(caller.id)}, status_code=201)
 
     @app.post("/accept")
@@ -279,6 +353,9 @@ def create_app(
         caller = authenticate(request)
         if isinstance(caller, Response):
             return caller
+        refusal = _owner_only(caller)
+        if refusal is not None:
+            return refusal
 
         try:
             body = _decode_body(await request.body())
@@ -314,6 +391,9 @@ def create_app(
         caller = authenticate(request)
         if isinstance(caller, Response):
             return caller
+        refusal = _owner_only(caller)
+        if refusal is not None:
+            return refusal
 
         try:
             body = _decode_body(await request.body())
@@ -393,18 +473,19 @@ def create_app(
         if not store.is_contact(recipient.id, sender.id):
             if recipient.is_welcome:
                 pass
-            elif store.is_open_inbox(recipient.id) and not sender.is_welcome:
+            elif sender.is_welcome:
+                # The server may always tell somebody something, and does not
+                # become their contact for doing it. Notices used to buy the
+                # right by writing the pair themselves, which put the desk in
+                # the address book of everyone who ever enrolled an agent —
+                # and made it a subscriber of every mailbox that was a list.
+                # Being able to reach you and being in your book are different
+                # things, and only the first one the server needs.
+                pass
+            elif store.is_open_inbox(recipient.id):
                 # Writing to an open mailbox is how you subscribe to it. The
                 # pair is created below, once the message is known to be good.
                 subscribing = True
-            elif store.is_open_inbox(recipient.id):
-                # The desk is the server, not somebody who can follow a list.
-                # `announce` reaches every registered identity, and one of
-                # them holding an open mailbox had the effect of subscribing
-                # the server to a user's list: every later broadcast then
-                # wrote to the desk, which greeted it back. Deliver the
-                # notice, create nothing.
-                pass
             else:
                 return _error(403, "the recipient has not accepted you")
 
@@ -636,7 +717,6 @@ def _welcome_reply(
     acknowledgement off would show every newcomer their own greeting sitting
     unanswered forever in `doorslip sent`.
     """
-    store.add_contact_pair(welcome.human_id, sender_human_id)
     store.ack_message(envelope["message_id"], welcome.human_id)
     raw, signature = welcome.reply_to(envelope)
     reply = parse(raw)
@@ -661,7 +741,6 @@ def _notify_invitation_accepted(
     agent_id = store.agent_id_for(welcome.keypair.public_key)
     if agent_id is None:
         return
-    store.add_contact_pair(welcome.human_id, inviter.id)
     store.store_message(
         envelope=parse(raw),
         raw=raw,
@@ -688,7 +767,6 @@ def _notify_enrolment(
     agent_id = store.agent_id_for(welcome.keypair.public_key)
     if agent_id is None:
         return
-    store.add_contact_pair(welcome.human_id, human.id)
     store.store_message(
         envelope=parse(raw),
         raw=raw,

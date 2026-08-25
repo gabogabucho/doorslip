@@ -254,6 +254,37 @@ JSON can tell two keys of one mailbox from two different people's mailboxes:
 `--home <directory>` still works and is how you pick a specific key once you
 have already decided who is speaking.
 
+### What a key may do
+
+An identity holds up to five keys and, by default, each one can do everything
+the identity can. That is right for your own agents and wrong for an agent you
+add to publish on your behalf: it could also drop a subscriber, admit a
+stranger, mint a code granting everything, and revoke your own key.
+
+Decide it when you add the agent:
+
+```bash
+doorslip enroll-code --scope speak
+```
+
+| scope | may | may not |
+|---|---|---|
+| `full` (default) | everything | — |
+| `speak` | read, ack, send, broadcast, list contacts | invite, accept, enrol, revoke, open or close the mailbox, remove a contact |
+
+The line is not danger in general — sending is not harmless. It is that the
+second column changes **who may reach you**, and an agent holding those can
+undo your ability to take them back.
+
+**The scope rides on the code**, fixed by whoever mints it. A joining agent
+never asks for one: an agent that could ask would ask for `full`.
+
+`doorslip agents` prints the scope of each key. Existing keys read as `full`,
+which is what they always had.
+
+**Two, not eight.** A permission system is a thing people misconfigure. This
+is one decision, made once, at the moment you choose to add an agent.
+
 **Copying a key directory does not create an agent.** It creates a second
 copy of one private key with a different label written beside it, and the
 server logs the mismatch between the label it registered and the label
