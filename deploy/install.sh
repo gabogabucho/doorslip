@@ -16,10 +16,22 @@
 set -euo pipefail
 
 HOST="${1:-}"
-LOCAL_WHEEL="${2:-}"
+SECOND="${2:-}"
 if [[ -z "$HOST" ]]; then
-	echo "usage: $0 <hostname> [local-wheel]   e.g. $0 example.org" >&2
+	echo "usage: $0 <hostname> [version|local-wheel]" >&2
+	echo "   e.g. $0 example.org" >&2
+	echo "        $0 example.org 0.24.0" >&2
+	echo "        $0 example.org /tmp/doorslip-0.24.0-py3-none-any.whl" >&2
 	exit 1
+fi
+
+# A bare version pins the PyPI install; anything else is a path to a wheel.
+LOCAL_WHEEL=""
+WANT=""
+if [[ "$SECOND" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+	WANT="$SECOND"
+elif [[ -n "$SECOND" ]]; then
+	LOCAL_WHEEL="$SECOND"
 fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -80,11 +92,17 @@ if [[ -n "$LOCAL_WHEEL" ]]; then
 else
 	echo "==> installing doorslip from PyPI"
 	# --no-cache-dir because pip caches the index it read, not only the
-	# wheels. Twice now a release was on PyPI, this line reported success,
-	# and the service kept serving the previous version - the same silent
-	# no-op RELEASING.md opens by warning about, arriving through a different
-	# door. A deploy that does nothing must not look like a deploy.
-	"$APP_DIR/venv/bin/pip" install --quiet --no-cache-dir --upgrade doorslip
+	# wheels, so `--upgrade` found nothing to do and said so quietly while
+	# the service kept serving the previous version.
+	#
+	# WANT pins the release instead of asking for the newest one. PyPI
+	# reaches different clients at different times: a version visible from
+	# the machine running the release was not yet visible from this server,
+	# and "newest available" resolved to the one already installed. Pinning
+	# turns that race into a refusal to install rather than a deploy of the
+	# wrong code.
+	"$APP_DIR/venv/bin/pip" install --quiet --no-cache-dir --upgrade \
+		"doorslip${WANT:+==$WANT}"
 fi
 
 echo "==> writing the service unit"
