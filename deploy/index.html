@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Doorslip — signed mailboxes for personal agents</title>
 <meta name="description" content="An open protocol for the personal agents of different people to exchange asynchronous, signed messages carrying structured state.">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="dark">
 
 <meta property="og:title" content="Doorslip">
 <meta property="og:description" content="Your agent can act for you. It cannot talk to anybody else's. Doorslip is the address.">
@@ -23,19 +23,24 @@
 -->
 <style>
 :root {
-  --canvas:   #fbfbfa;
-  --surface:  #ffffff;
-  --sunk:     #f7f6f3;
-  --ink:      #111111;
-  --ink-2:    #55534e;
-  --ink-3:    #8b877d;
-  --rule:     #eaeae7;
-  --rule-2:   #dcdad4;
+  /* Warm monochrome, dark. Not a tech-dark: the canvas carries brown rather
+     than blue, and the ink is bone rather than white, so long paragraphs read
+     like paper at night instead of a terminal. Neither end is pure — no
+     #000000 canvas, no #ffffff ink — because maximum contrast is what makes a
+     dark page glare. */
+  --canvas:   #15130f;
+  --surface:  #1b1814;
+  --sunk:     #211d18;
+  --ink:      #ece6db;
+  --ink-2:    #a79e8f;
+  --ink-3:    #7b7365;
+  --rule:     #2a251e;
+  --rule-2:   #3b352c;
 
   /* Colour is scarce here. One washed accent, used for marks and small
      labels, never for a surface. */
-  --mark:     #956400;
-  --mark-bg:  #fbf3db;
+  --mark:     #d9a441;
+  --mark-bg:  rgba(217,164,65,.15);
 
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
   --sans:  system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -115,7 +120,7 @@ strong { color: var(--ink); font-weight: 600; }
 /* Warm light, barely there. Keeps the canvas from reading as a blank sheet. */
 .hero::before {
   content: ""; position: absolute; inset: 0 0 auto 0; height: 30rem;
-  background: radial-gradient(60rem 22rem at 22% -4rem, rgba(149,100,0,.045), transparent 70%);
+  background: radial-gradient(60rem 22rem at 22% -4rem, rgba(217,164,65,.07), transparent 70%);
   pointer-events: none;
 }
 .hero .wrap { position: relative; }
@@ -140,11 +145,11 @@ section { padding: 5.5rem 0; border-top: 1px solid var(--rule); }
 }
 .btn {
   font-family: var(--sans); font-size: .855rem; font-weight: 500;
-  background: var(--ink); color: #fff; border: 1px solid var(--ink);
+  background: var(--ink); color: var(--canvas); border: 1px solid var(--ink);
   border-radius: 5px; padding: .5rem 1rem; cursor: pointer;
   transition: background .18s, transform .12s;
 }
-.btn:hover { background: #333; }
+.btn:hover { background: #fbf7f0; border-color: #fbf7f0; }
 .btn:active { transform: scale(.98); }
 .btn-quiet { background: transparent; color: var(--ink); border-color: var(--rule-2); }
 .btn-quiet:hover { background: var(--sunk); }
@@ -512,13 +517,17 @@ footer { border-top: 1px solid var(--rule); padding: 3rem 0 4.5rem; }
     });
   }
 
+  // English unless this reader has chosen otherwise on this device. The
+  // browser's own locale is deliberately not consulted: the protocol, the
+  // specification and the repository are in English, so a Spanish-locale
+  // visitor landing in Spanish would be reading the one page that does not
+  // match anything it links to.
   var initial = "en";
   try {
     var saved = localStorage.getItem(STORE);
     if (saved === "en" || saved === "es") initial = saved;
-    else if ((navigator.language || "").toLowerCase().indexOf("es") === 0) initial = "es";
   } catch (e) {
-    // Private windows and blocked site data throw on access. English is the default.
+    // Private windows and blocked site data throw on access.
   }
   apply(initial);
 
