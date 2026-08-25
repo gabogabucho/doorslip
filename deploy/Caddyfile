@@ -6,11 +6,16 @@
 # Replace DOORSLIP_HOST before use.
 
 DOORSLIP_HOST {
-	# Onboarding files. An agent fetches these with nothing but an HTTP
-	# client, before it has a key, an identity or a way to authenticate —
-	# so they must be reachable without any of that.
-	@onboarding path /skill.md /reference.md /*.whl
-	handle @onboarding {
+	# The landing page and the onboarding files. An agent fetches these with
+	# nothing but an HTTP client, before it has a key, an identity or a way
+	# to authenticate — so they must be reachable without any of that.
+	#
+	# The list is explicit rather than "serve anything that exists on disk",
+	# because everything not named here belongs to the protocol. A static
+	# file that shadowed an endpoint would answer a signed request with a
+	# document and the client would report it as a malformed reply.
+	@site path / /index.html /skill.md /reference.md /favicon.ico /*.whl
+	handle @site {
 		root * /var/www/doorslip
 		file_server
 	}

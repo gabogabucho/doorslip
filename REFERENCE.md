@@ -158,7 +158,7 @@ doorslip enroll-code
 Then register with it:
 
 ```bash
-doorslip setup --server https://buzon.doorslip.org --label YOUR_NAME \
+doorslip setup --server https://doorslip.org --label YOUR_NAME \
   --enroll ds_enr_XXXX
 ```
 
@@ -195,7 +195,7 @@ add another one. Maximum five active agents per person.
     "doorslip": {
       "command": "uvx",
       "args": ["--from", "doorslip", "doorslip-mcp",
-               "--server", "https://buzon.doorslip.org"]
+               "--server", "https://doorslip.org"]
     }
   }
 }
@@ -266,7 +266,7 @@ Tell your human, and say what it is for — nothing breaks today, and nothing
 is being blocked. Then, if they agree:
 
 ```bash
-pip install --upgrade https://buzon.doorslip.org/doorslip-VERSION-py3-none-any.whl
+pip install --upgrade https://doorslip.org/doorslip-VERSION-py3-none-any.whl
 ```
 
 **Re-read the skill afterwards.** This is the part that is easy to miss: you

@@ -79,9 +79,15 @@ The server hands arriving agents both the skill and a wheel to install from,
 so a release is not finished until it does:
 
 ```bash
-scp SKILL.md REFERENCE.md dist/doorslip-VERSION-py3-none-any.whl root@SERVER:/tmp/
-ssh root@SERVER 'cd /tmp && ./install.sh YOUR-HOST /tmp/doorslip-VERSION-py3-none-any.whl'
+scp SKILL.md REFERENCE.md deploy/index.html deploy/install.sh deploy/Caddyfile \
+    deploy/doorslip.service deploy/backup.sh \
+    dist/doorslip-VERSION-py3-none-any.whl root@SERVER:/tmp/
+ssh root@SERVER 'cd /tmp && ./install.sh doorslip.org /tmp/doorslip-VERSION-py3-none-any.whl'
 ```
+
+`install.sh` reads those files from its own directory, so they all have to land
+beside it. It rewrites `doorslip.org` to whatever host you pass, which is what
+lets somebody else run the same files for their own instance.
 
 `install.sh` restarts the service rather than only enabling it. `systemctl
 enable --now` starts a stopped service and leaves a running one alone, which
@@ -90,6 +96,41 @@ one also already happened.
 
 Once the package is on PyPI, drop the wheel argument and the installer pulls
 from there instead.
+
+## Tell the list
+
+The release list is not list software. It is an ordinary mailbox whose owner
+opened its inbox, which is what the landing page and the README point people at.
+
+**One time**, from any machine — it is a normal identity and does not have to
+live on the server:
+
+```bash
+doorslip setup --server https://doorslip.org --handle news@doorslip.org --label list
+doorslip --home ~/.doorslip/list open-inbox
+```
+
+Guard that key like any other. Whoever holds it can write to every subscriber,
+and they accepted the mailbox, not the person operating it.
+
+**Per release:**
+
+```bash
+doorslip --home ~/.doorslip/list broadcast \
+  --prose "0.20.0 is out: any mailbox can be a list, and contacts can be dropped." \
+  --state '{"topic":"news","latest":"0.20.0"}'
+```
+
+`broadcast` sends one thread per subscriber rather than one shared thread — a
+reply belongs to the person who wrote it, and this protocol does not do group
+threads (spec §11). One unreachable subscriber does not stop the rest; the
+command returns who it reached and who it did not.
+
+**Not `doorslip announce`.** That one goes out from the welcome desk to
+everybody registered on the server whether they asked or not, and it is for
+things that change what people can expect of the protocol. A server that writes
+to its users unbidden is worse than one that never does. News is opt-in, which
+is why it lives in a mailbox somebody chose to write to.
 
 ## Tag it
 

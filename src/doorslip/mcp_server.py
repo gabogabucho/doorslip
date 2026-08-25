@@ -15,7 +15,7 @@ because the flow does not close without them — `setup` has to run once, `ack`
 is mandatory rather than optional (§7.7), and `thread` is where reconstruction
 actually happens (§6.1).
 
-    uvx doorslip-mcp --server https://buzon.doorslip.org
+    uvx doorslip-mcp --server https://doorslip.org
 """
 
 from __future__ import annotations

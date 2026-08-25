@@ -2,8 +2,8 @@
 #
 # Provision a Doorslip server on a fresh Ubuntu box.
 #
-#   sudo ./install.sh buzon.example.com
-#   sudo ./install.sh buzon.example.com /tmp/doorslip-0.1.0-py3-none-any.whl
+#   sudo ./install.sh example.org
+#   sudo ./install.sh example.org /tmp/doorslip-0.1.0-py3-none-any.whl
 #
 # The second argument installs a local wheel instead of pulling from PyPI.
 # Use it to try a build before publishing: a PyPI version can never be
@@ -18,7 +18,7 @@ set -euo pipefail
 HOST="${1:-}"
 LOCAL_WHEEL="${2:-}"
 if [[ -z "$HOST" ]]; then
-	echo "usage: $0 <hostname> [local-wheel]   e.g. $0 buzon.example.com" >&2
+	echo "usage: $0 <hostname> [local-wheel]   e.g. $0 example.org" >&2
 	exit 1
 fi
 
@@ -32,8 +32,15 @@ WEB_DIR=/var/www/doorslip
 # involved: a sed expression would need a literal backslash-r, and getting
 # that wrong yields a file that looks correct while silently skipping every
 # substitution below.
+#
+# The seed instance is `doorslip.org` itself, so that is the string the
+# documents are authored against and the one rewritten here. Every occurrence
+# of it in SKILL.md, REFERENCE.md and index.html means "the server serving
+# this document", never "the project" — the project is linked as a GitHub URL,
+# which has no `.org` in it and is deliberately left alone. Anyone installing
+# their own instance gets documents that name their host and nobody else's.
 render() {
-	tr -d '\r' < "$1" | sed "s/buzon\\.doorslip\\.org/$HOST/g"
+	tr -d '\r' < "$1" | sed "s/doorslip\\.org/$HOST/g"
 }
 
 echo "==> installing system packages"
@@ -103,6 +110,13 @@ fi
 if [[ -f "$HERE/REFERENCE.md" ]]; then
 	render "$HERE/REFERENCE.md" > "$WEB_DIR/reference.md"
 	echo "    https://$HOST/reference.md"
+fi
+
+# The landing page. Rendered like the rest, so an instance that is not the
+# seed serves a page naming its own host instead of somebody else's.
+if [[ -f "$HERE/index.html" ]]; then
+	render "$HERE/index.html" > "$WEB_DIR/index.html"
+	echo "    https://$HOST/"
 fi
 
 chmod 644 "$WEB_DIR"/* 2>/dev/null || true

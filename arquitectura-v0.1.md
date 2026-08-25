@@ -762,53 +762,73 @@ los **bytes crudos del body** antes de parsear el JSON, porque contra eso se
 verifica la firma (§5.1). En FastAPI es `await request.body()` — no usar el
 modelo Pydantic parseado para verificar.
 
-### 12.1 Dominios: el del protocolo no es el de la instancia
+### 12.1 Dominios: la instancia semilla es `doorslip.org`
 
-Son dos cosas distintas y confundirlas tiene un costo conocido.
+**Decisión: el buzón semilla corre en `doorslip.org` mismo. Los handles de v0
+son `nombre@doorslip.org`. No hay subdominio.**
 
-| qué | dónde | qué sirve |
-|---|---|---|
-| **El protocolo** | `doorslip.org` | la spec, el `SKILL.md` que los agentes leen para registrarse solos, la doc pública. **No corre buzones.** |
-| **La instancia semilla** | `buzon.doorslip.org` | el servidor FastAPI. Los handles de v0 son `nombre@buzon.doorslip.org`. |
+Una versión anterior de esta sección separaba `doorslip.org` (la spec) de
+`buzon.doorslip.org` (el servidor), y argumentaba que sin esa separación la
+instancia semilla se queda con toda la red — §11 bis — porque el que lleva el
+nombre del protocolo parece el canónico y el que parece canónico decide dónde se
+registra la gente. El caso Matrix es real: `matrix.org` es la spec *y* el
+homeserver más grande al mismo tiempo.
 
-**Por qué separados.** §11 bis dice que la instancia semilla se queda con casi
-toda la red y el protocolo termina federado en el papel y centralizado en la
-práctica. Ponerle al servidor el nombre del protocolo **es darle un privilegio**
-— no técnico, pero sí el de parecer el canónico, que es el que decide dónde se
-registra la gente. Es exactamente lo que le pasó a Matrix: `matrix.org` es la
-spec *y* el homeserver más grande al mismo tiempo. Mastodon lo esquivó mejor
-separando `joinmastodon.org` de `mastodon.social`.
+**Por qué se dio marcha atrás.** El argumento citaba a Mastodon como el modelo:
+`joinmastodon.org` separado de `mastodon.social`. Pero esos son **dos dominios
+registrables distintos** — distinto registrante, distinto WHOIS, se pueden
+transferir por separado. `buzon.doorslip.org` no es eso. Es el mismo dominio, el
+mismo dueño, y el nombre del protocolo sigue adentro del handle de todos.
 
-Con subdominio, desde el día uno la instancia **se lee como una instancia**.
-Cuando aparezca el segundo servidor, `buzon.doorslip.org` es obviamente "uno
-de". El hábito se forma en las primeras diez personas y después no se revierte.
+O sea que el subdominio citaba el patrón y hacía algo más débil que el patrón,
+sin decirlo. Se leía igual de canónico y cobraba handles más largos. **Era el
+costo sin el beneficio.** Las opciones honestas eran dos: la raíz, o un dominio
+registrable aparte de verdad. Se eligió la raíz.
 
-**El dominio del protocolo es neutro; el de una instancia no tiene por qué
-serlo.** El handle lleva el servidor adentro, así que un ccTLD en el protocolo
-estampa una nacionalidad en el formato del mensaje para siempre y le dice al que
-lee la spec desde afuera que esto es un proyecto local. Una instancia, en cambio,
-puede ser todo lo local que quiera — es una entre muchas. De ahí que el protocolo
-esté en inglés y el primer buzón se llame `buzon`.
+**Qué decide el empate.** `normalise_handle` (§5, `api.py`) clava el handle al
+dominio del servidor, y §10 dice que no hay recuperación ni migración de
+identidad. El dominio elegido queda adentro del handle de cada persona **para
+siempre**. Elegir el corto ahora no cuesta nada; arrepentirse después cuesta
+abandonar el handle de todos los registrados. Ante una decisión irreversible con
+un lado gratis, se toma el lado gratis.
+
+**Lo que la raíz no compra.** Ninguna autoridad, y no por elección sino por
+estructura: el servidor no firma por nadie, no emite claves, y la libreta es
+reemplazable. Lo único que compra es ser fácil de encontrar, que es exactamente
+lo que el MANIFIESTO ya dice en voz alta en vez de disimularlo con un subdominio.
+El riesgo de §11 bis sigue existiendo; la mitigación real nunca fue el nombre,
+es la federación y el hecho de que las claves son de los agentes.
+
+**La federación es ortogonal a esto.** Hoy las instancias están aisladas y no por
+el nombre: `deposit` resuelve el destinatario contra la SQLite local
+(`store.find_human(envelope["to"])`) y devuelve 404 si no está, y no hay entrega
+saliente. `normalise_handle` rechaza handles de otro dominio. Con subdominio
+pasaría exactamente lo mismo. El código sí está preparado — el lookup del
+remitente está aislado a propósito (`identity.py`, `store.py`) para que "buscar
+el `/.well-known/doorslip` del dominio que envía" sea reemplazar una función y
+nada más — pero eso es v1.
 
 **Nada de esto viaja en el cable.** Lo único que va en el mensaje es la palabra
-`doorslip` (headers, prefijo de códigos) y, en v1, un `/.well-known/doorslip`
-que **cada dominio sirve por su cuenta**. Por eso el nombre de la instancia
-semilla no es bloqueante y se puede cambiar al desplegar.
+`doorslip` (headers, prefijo de códigos) y, en v1, ese `/.well-known/doorslip`
+que **cada dominio sirve por su cuenta**.
 
-Operativamente: un solo VPS con Caddy sirve la raíz estática y el subdominio
-contra FastAPI. Un certificado, cero costo extra.
+Operativamente: un solo VPS con Caddy. La landing, `skill.md` y `reference.md`
+salen del disco; todo el resto de las rutas va contra FastAPI. La lista de rutas
+estáticas es explícita y no un `file_server` general, porque un archivo que
+tapara un endpoint le contestaría un documento a una request firmada. Un
+certificado, cero costo extra.
 
 ### 12.2 Las identidades de v0 son descartables
 
-Queda escrito porque es lo que impide que el subdominio semilla se calcifique.
+Queda escrito porque es lo que impide que la instancia semilla se calcifique.
 
 §10 ya acepta que no hay recuperación ni migración de identidad. La consecuencia
 directa: **los handles creados durante las pruebas no están pensados para
 sobrevivir.** Cuando se levante el servidor definitivo, se registra de nuevo y
 se rearma la libreta — con diez personas es media hora.
 
-Decirlo por adelantado evita el único escenario que obliga a conservar el
-subdominio para siempre: gente que ya se acostumbró a su handle.
+Decirlo por adelantado evita el único escenario que obliga a conservar una
+decisión para siempre: gente que ya se acostumbró a su handle.
 
 ## 13. Entregables
 
