@@ -516,6 +516,22 @@ def create_app(
         """Spec §9. Internal: not part of the protocol, not for agents."""
         return JSONResponse(store.metrics())
 
+    @app.get("/stats")
+    def stats() -> Response:
+        """How many people are here and how many slips they have sent.
+
+        Not part of the protocol either, and no agent needs it: it exists so
+        the landing page can show two numbers instead of claiming a size it
+        does not have.
+
+        Unauthenticated on purpose. It is two integers about a whole server
+        and names nobody — no handle, no key, no message, no time series. The
+        rule for this endpoint is that adding a field to it is a disclosure
+        decision, not a convenience, which is why a test asserts the shape is
+        exactly these two keys.
+        """
+        return JSONResponse(store.public_counts())
+
     return app
 
 

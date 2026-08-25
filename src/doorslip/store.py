@@ -782,6 +782,33 @@ class Store:
                 (str(uuid.uuid4()), kind, pubkey, human_id, detail, _now_text()),
             )
 
+    def public_counts(self) -> dict[str, int]:
+        """Two aggregates, for the landing page and nothing else.
+
+        Deliberately not `metrics()`. That one answers research questions the
+        operator asks about how the protocol is being used, and one of them
+        reads the `state` of every message to do it. Those numbers are not a
+        thing to hand to anybody who asks — this is, because it is two
+        integers with nobody inside them.
+
+        Neither count includes the welcome desk. It is not a person: it
+        registers itself on first boot, so counting it would report one
+        inhabitant on an empty server, and it replies to every arrival, so
+        counting its greetings would report traffic the server generated for
+        itself as conversation between people.
+        """
+        people = self._db.execute(
+            "SELECT COUNT(*) FROM human WHERE is_welcome = 0"
+        ).fetchone()[0]
+        messages = self._db.execute(
+            """
+            SELECT COUNT(*) FROM message
+             WHERE from_human_id NOT IN (SELECT id FROM human WHERE is_welcome = 1)
+               AND to_human_id   NOT IN (SELECT id FROM human WHERE is_welcome = 1)
+            """
+        ).fetchone()[0]
+        return {"people": people, "messages": messages}
+
     def metrics(self) -> dict[str, Any]:
         """The four metrics of spec §9, with the operational definitions.
 

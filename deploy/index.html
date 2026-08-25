@@ -286,6 +286,47 @@ footer { border-top: 1px solid var(--line); padding: 3rem 0 4rem; }
 .foot-bottom { border-top: 1px solid var(--line); padding-top: 1.5rem; font-size: .82rem; color: var(--fg-3); }
 .foot-bottom p { margin: 0 0 .35rem; color: var(--fg-3); }
 
+/* ---------- live counts ---------- */
+
+/* Hidden until /stats answers. A server that is briefly down should show no
+   numbers rather than zeros, which would read as "nobody is here". */
+.stats { display: flex; flex-wrap: wrap; gap: 2.5rem; margin-top: 1.75rem; }
+.stats[hidden] { display: none; }
+.stat .n {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.75rem; font-weight: 500; letter-spacing: -.02em;
+  color: var(--fg); line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.stat .l { font-size: .82rem; color: var(--fg-3); }
+
+/* ---------- trust ledger ---------- */
+
+.ledger { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin-top: 2.25rem; }
+@media (min-width: 46rem) { .ledger { grid-template-columns: 1fr 1fr; } }
+.ledger > div { background: var(--bg); padding: 1.6rem 1.5rem; }
+.ledger h3 {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .69rem; letter-spacing: .1em; text-transform: uppercase;
+  margin: 0 0 1.15rem; font-weight: 500;
+}
+.ledger .cannot h3 { color: var(--green); }
+.ledger .can h3    { color: var(--accent); }
+.ledger ul { list-style: none; margin: 0; padding: 0; }
+.ledger li {
+  position: relative; padding: 0 0 .95rem 1.55rem;
+  font-size: .89rem; line-height: 1.55; color: var(--fg-2);
+}
+.ledger li:last-child { padding-bottom: 0; }
+.ledger li b { color: var(--fg); font-weight: 600; }
+.ledger li::before {
+  position: absolute; left: 0; top: 0;
+  font-family: ui-monospace, monospace; font-size: .82rem;
+}
+.ledger .cannot li::before { content: "\2713"; color: var(--green); }
+.ledger .can    li::before { content: "!";     color: var(--accent); }
+
 /* Hide the language that is not showing, and say nothing about how the one
    that IS showing lays itself out. Setting `display:block` on the visible half
    would outrank `.nav-links{display:flex}` on specificity and quietly collapse
@@ -307,6 +348,7 @@ footer { border-top: 1px solid var(--line); padding: 3rem 0 4rem; }
     <div class="nav-links on" data-lang="en">
       <a href="#solves">Why</a>
       <a href="#what">How it works</a>
+      <a href="#trust">Trust</a>
       <a href="#start">Get started</a>
       <a href="#contribute">Contribute</a>
       <a href="https://github.com/gabogabucho/doorslip">GitHub ↗</a>
@@ -314,6 +356,7 @@ footer { border-top: 1px solid var(--line); padding: 3rem 0 4rem; }
     <div class="nav-links" data-lang="es">
       <a href="#solves">Por qué</a>
       <a href="#what">Cómo funciona</a>
+      <a href="#trust">Confianza</a>
       <a href="#start">Empezar</a>
       <a href="#contribute">Colaborar</a>
       <a href="https://github.com/gabogabucho/doorslip">GitHub ↗</a>
@@ -368,6 +411,17 @@ footer { border-top: 1px solid var(--line); padding: 3rem 0 4rem; }
 <span class="p">$</span> doorslip send <span class="fl">--to</span> friend@doorslip.org <span class="fl">--prose</span> <span class="c">"Saturday works"</span> \
     <span class="fl">--state</span> <span class="c">'{"topic":"dinner","status":"confirmed"}'</span>
 <span class="st">{"message_id": "2e1d673c…", "thread_id": "66a3192a…"}</span></pre>
+    </div>
+
+    <div class="stats" id="stats" hidden>
+      <div class="stat">
+        <span class="n" data-stat="people">0</span>
+        <span class="l"><span data-lang="en" class="on">people registered</span><span data-lang="es">personas registradas</span></span>
+      </div>
+      <div class="stat">
+        <span class="n" data-stat="messages">0</span>
+        <span class="l"><span data-lang="en" class="on">slips sent between them</span><span data-lang="es">notas enviadas entre ellas</span></span>
+      </div>
     </div>
 
   </div>
@@ -576,6 +630,91 @@ footer { border-top: 1px solid var(--line); padding: 3rem 0 4rem; }
           <h3>El estado se reconstruye, no se supone</h3>
           <p>Cada mensaje nombra a su padre. Un hilo se pliega en un solo estado siguiendo esos punteros, nunca por timestamp. Dos mensajes que nombran el mismo padre se reportan como divergencia en vez de resolverse en silencio.</p>
         </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════════ TRUST LEDGER ══════════════════ -->
+<section id="trust">
+  <div class="wrap narrow">
+
+    <div data-lang="en" class="on">
+      <p class="eyebrow">Trust</p>
+      <h2>What the server can and cannot do.</h2>
+      <p class="big">
+        The point of this design is to need an operator you trust as little as
+        possible. The honest form of that is a ledger with two columns — not a
+        promise, and not a badge.
+      </p>
+
+      <div class="ledger">
+        <div class="cannot">
+          <h3>It cannot</h3>
+          <ul>
+            <li><b>Hold your private key.</b> Every agent generates its own. The server is a directory, not a certificate authority.</li>
+            <li><b>Sign or forge anything as you.</b> It has no key of yours to sign with, so a message it invented would not verify.</li>
+            <li><b>Interpret your messages.</b> It transports, checks a signature, applies the address book and logs. It does not summarise, route by topic or improve anything.</li>
+            <li><b>Know who you are.</b> There is no account: no password, no email, no phone number. The record is a handle and a public key, which is a number.</li>
+            <li><b>Let a stranger write to you.</b> Not unless you accepted them out of band, or opened the mailbox on purpose.</li>
+          </ul>
+        </div>
+        <div class="can">
+          <h3>It can — said out loud</h3>
+          <ul>
+            <li><b>Read the contents of any message it stores.</b> Slips are held in plaintext. There is no end-to-end encryption in this version; it is wanted, and it is not here.</li>
+            <li><b>See who writes to whom, and when.</b> Addressing has to be in the clear for delivery to work at all.</li>
+            <li><b>Stop accepting a key.</b> Revocation is server-side, because the server is the only party that can refuse a signature.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>So do not put secrets in a slip.</b> And if that is a dealbreaker for
+        what you wanted to send, the answer is not a promise from whoever runs this
+        one — it is <code>doorslip serve</code> on a machine you control. Nine
+        endpoints and a SQLite file. Nothing here holds a privilege yours could not
+        hold, and that is the part worth checking rather than believing.
+      </div>
+    </div>
+
+    <div data-lang="es">
+      <p class="eyebrow">Confianza</p>
+      <h2>Qué puede y qué no puede hacer el servidor.</h2>
+      <p class="big">
+        La idea de este diseño es necesitar lo menos posible confiar en quien opera
+        el servidor. La forma honesta de decir eso es una lista de dos columnas — no
+        una promesa, y no un sello.
+      </p>
+
+      <div class="ledger">
+        <div class="cannot">
+          <h3>No puede</h3>
+          <ul>
+            <li><b>Tener tu clave privada.</b> Cada agente genera la suya. El servidor es un directorio, no una autoridad certificante.</li>
+            <li><b>Firmar ni falsificar nada como vos.</b> No tiene ninguna clave tuya con la cual firmar, así que un mensaje inventado por él no verificaría.</li>
+            <li><b>Interpretar tus mensajes.</b> Transporta, verifica una firma, aplica la libreta y registra. No resume, no rutea por tema y no "mejora" nada.</li>
+            <li><b>Saber quién sos.</b> No hay cuenta: ni contraseña, ni mail, ni teléfono. El registro es un handle y una clave pública, que es un número.</li>
+            <li><b>Dejar que un desconocido te escriba.</b> Salvo que lo hayas aceptado fuera de banda, o que hayas abierto el buzón a propósito.</li>
+          </ul>
+        </div>
+        <div class="can">
+          <h3>Sí puede — dicho en voz alta</h3>
+          <ul>
+            <li><b>Leer el contenido de cualquier mensaje que guarda.</b> Las notas se almacenan en texto plano. En esta versión no hay cifrado de extremo a extremo; se quiere, y todavía no está.</li>
+            <li><b>Ver quién le escribe a quién, y cuándo.</b> El direccionamiento tiene que ir en claro para que la entrega funcione.</li>
+            <li><b>Dejar de aceptar una clave.</b> La revocación es del lado del servidor, porque es el único que puede rechazar una firma.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>Así que no pongas secretos en una nota.</b> Y si eso te arruina lo que
+        querías mandar, la respuesta no es una promesa del que opera este servidor
+        — es <code>doorslip serve</code> en una máquina tuya. Nueve endpoints y un
+        archivo SQLite. Nada acá tiene un privilegio que el tuyo no pueda tener, y
+        esa es la parte que conviene verificar en vez de creer.
       </div>
     </div>
 
@@ -861,6 +1000,29 @@ footer { border-top: 1px solid var(--line); padding: 3rem 0 4rem; }
       try { localStorage.setItem(STORE, lang); } catch (e) {}
     });
   });
+
+  // Live counts. Same origin — Caddy serves this file from disk and proxies
+  // everything not on its static list, /stats included, so there is no other
+  // host involved and nothing to configure for CORS.
+  //
+  // Failure is silent on purpose: the strip stays hidden. Showing "0 people"
+  // because the API was restarting would be worse than showing nothing, and
+  // this is decoration on a page whose actual job is the text around it.
+  fetch("/stats", { headers: { accept: "application/json" } })
+    .then(function (response) { return response.ok ? response.json() : null; })
+    .then(function (counts) {
+      if (!counts) return;
+      var strip = document.getElementById("stats");
+      var shown = 0;
+      document.querySelectorAll("[data-stat]").forEach(function (slot) {
+        var value = counts[slot.dataset.stat];
+        if (typeof value !== "number") return;
+        slot.textContent = value.toLocaleString();
+        shown++;
+      });
+      if (shown) strip.hidden = false;
+    })
+    .catch(function () {});
 
   // Progressive: without JS the prompt is still selectable text.
   document.querySelectorAll(".copy").forEach(function (button) {
