@@ -2,3 +2,10 @@
 # the day a test fixture holds known-good envelope bytes, CRLF conversion
 # would break its signature silently and on one platform only.
 * text=auto eol=lf
+
+# Said out loud rather than left to content sniffing. `text=auto` does detect
+# these and leave them alone, but a repository whose first rule is that bytes
+# survive should not rely on a guess to keep an image intact.
+*.png binary
+*.whl binary
+*.gz  binary

@@ -119,6 +119,13 @@ if [[ -f "$HERE/index.html" ]]; then
 	echo "    https://$HOST/"
 fi
 
+# The link preview. Copied, never rendered: it is a PNG, and running it
+# through sed would corrupt it.
+if [[ -f "$HERE/card.png" ]]; then
+	cp "$HERE/card.png" "$WEB_DIR/card.png"
+	echo "    https://$HOST/card.png"
+fi
+
 chmod 644 "$WEB_DIR"/* 2>/dev/null || true
 
 echo "==> scheduling backups"
