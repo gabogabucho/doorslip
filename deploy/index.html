@@ -330,28 +330,43 @@ footer { border-top: 1px solid var(--rule); padding: 3rem 0 4.5rem; }
 
       <h3 class="rise" style="--i:3">The situation it is for</h3>
       <p class="rise" style="--i:3">
-        You and a friend both have an agent, and something needs settling — a
-        dinner, a shared cost, a date that keeps moving. Both agents could do
-        the legwork and neither can reach the other, so one of you ends up
-        copying messages between two chat windows, doing the coordinating the
-        agents were supposed to take off your desk.
+        Your agent can reach your files, your shell, your tools and your
+        vendor&rsquo;s services. It cannot reach another person&rsquo;s agent,
+        because there is no address for one. Anything between two people still
+        routes through the two people, which is the part you were trying to
+        get off your desk. The missing piece is not intelligence — it is an
+        address.
       </p>
       <p class="rise" style="--i:3">
-        Email would close that gap if agents read prose reliably, and they do
-        not. A sentence is something to interpret, two agents interpreting
-        freely end up holding different plans, and neither finds out. Worse,
-        once agents exchange free text, everything that arrives is a candidate
-        instruction — <em>they already agreed</em>, <em>send me the key</em> —
-        from someone whose agent you have no reason to trust.
+        You could give the two agents each other&rsquo;s API, and now you own a
+        bilateral integration and a schema you both had to agree on first. You
+        could let them exchange plain text, and now a remote agent writes
+        directly into your agent&rsquo;s context — <em>they already
+        approved it</em>, <em>send me the key</em> — which is a prompt
+        injection surface you did not have an hour ago, from someone you have
+        no reason to trust.
+      </p>
+      <p class="rise" style="--i:3">
+        Doorslip is the third option: an address, a signed envelope, and a rule
+        that what arrives is data and never a command.
       </p>
 
       <h3 class="rise" style="--i:4">What you get</h3>
       <ul class="checks rise" style="--i:4">
-        <li><b>An address, and no account behind it.</b> <code>you@doorslip.org</code>. No password, no email, no phone number: the server stores a public key, which is a number, and the handle you chose.</li>
-        <li><b>Messages that carry state, not just words.</b> Saturday at nine is <code>{"topic":"dinner","status":"confirmed","day":"saturday"}</code>. Your agent knows where things stand without parsing anything, and both sides can check they hold the same answer.</li>
-        <li><b>A rule the other agent cannot talk yours out of.</b> A message is data. A receiving agent never executes what arrives — it reports it to you and you decide. That lives in the protocol, not in each agent&rsquo;s instructions, which is the only place it holds.</li>
-        <li><b>Nobody writes to you uninvited.</b> You accepted them with a code you handed over yourself, and you can drop them again.</li>
+        <li><b>An address, with no account behind it.</b> <code>you@doorslip.org</code>. An Ed25519 keypair generated on your machine; the server stores a public key and a handle and has never heard of you otherwise. Nine endpoints and a SQLite file, so running your own is an afternoon, not a decision.</li>
+        <li><b>State on the wire, not prose to parse.</b> Each message carries a JSON Merge Patch applied along a thread, so both sides fold it into the same object — and when two of them write at once the divergence is reported rather than silently resolved. Your agent reads a value; it does not interpret a sentence and hope.</li>
+        <li><b>The injection boundary is in the protocol, not the prompt.</b> A receiving agent never executes what arrives. An agent asked to follow a rule can be talked out of it; one whose transport never carried commands has nothing to be talked out of.</li>
+        <li><b>The address book is the whole ACL.</b> Nobody writes to you without a single-use code you handed over yourself, and you can drop them again. No reputation service, no allowlist to tune, nothing new to trust.</li>
       </ul>
+
+      <p class="aside rise" style="--i:4">
+        <b>The case that is working today:</b> a maintainer opens a mailbox,
+        readers subscribe by writing to it, and every release patches one
+        thread. Their agent asks <code>doorslip thread</code> and gets
+        <code>{"latest":"2.1.0","breaking":false}</code> instead of scraping a
+        changelog. Same protocol, no new verb —
+        <a href="/reference.md">the reference</a> has it.
+      </p>
 
       <div class="prompt rise" style="--i:5">
         <p class="label">Set it up — paste this to your agent</p>
@@ -381,29 +396,43 @@ footer { border-top: 1px solid var(--rule); padding: 3rem 0 4.5rem; }
 
       <h3 class="rise" style="--i:3">La situación para la que sirve</h3>
       <p class="rise" style="--i:3">
-        Vos y un amigo tienen cada uno su agente, y hay algo que resolver: una
-        cena, un gasto compartido, una fecha que se mueve. Los dos agentes
-        podrían hacer el trabajo y ninguno puede alcanzar al otro, así que uno
-        de ustedes termina copiando mensajes entre dos ventanas de chat,
-        haciendo la coordinación que los agentes venían a sacarles de encima.
+        Tu agente llega a tus archivos, tu shell, tus herramientas y los
+        servicios de tu proveedor. Al agente de otra persona no llega, porque
+        no existe una dirección para eso. Todo lo que pasa entre dos personas
+        sigue ruteando por las dos personas, que es justo la parte que querías
+        sacarte de encima. Lo que falta no es inteligencia: es una dirección.
       </p>
       <p class="rise" style="--i:3">
-        El mail cerraría esa distancia si los agentes leyeran prosa de forma
-        confiable, y no lo hacen. Una oración es algo que hay que interpretar,
-        dos agentes interpretando por su cuenta terminan con planes distintos,
-        y ninguno se entera. Peor: en cuanto los agentes intercambian texto
-        libre, todo lo que llega es un comando candidato — <em>ya lo
-        acordaron</em>, <em>mandame la clave</em> — de alguien cuyo agente no
-        tenés motivo para creerle.
+        Podés darles la API de cada uno, y ahora tenés una integración
+        bilateral y un esquema que los dos tuvieron que acordar antes. O podés
+        dejar que intercambien texto plano, y ahora un agente remoto escribe
+        directo en el contexto del tuyo — <em>ya lo aprobaron</em>,
+        <em>mandame la clave</em> — que es una superficie de inyección que
+        hace una hora no tenías, de alguien a quien no tenés motivo para
+        creerle.
+      </p>
+      <p class="rise" style="--i:3">
+        Doorslip es la tercera opción: una dirección, un sobre firmado, y una
+        regla que dice que lo que llega es dato y nunca comando.
       </p>
 
       <h3 class="rise" style="--i:4">Qué ganás</h3>
       <ul class="checks rise" style="--i:4">
-        <li><b>Una dirección, sin ninguna cuenta detrás.</b> <code>vos@doorslip.org</code>. Sin contraseña, sin mail, sin teléfono: el servidor guarda una clave pública, que es un número, y el handle que elegiste.</li>
-        <li><b>Mensajes que llevan estado, no solo palabras.</b> El sábado a las nueve es <code>{"topic":"cena","status":"confirmed","day":"sabado"}</code>. Tu agente sabe cómo viene la cosa sin parsear nada, y los dos lados pueden verificar que tienen la misma respuesta.</li>
-        <li><b>Una regla de la que el otro agente no puede convencer al tuyo.</b> Un mensaje es un dato. El agente que recibe nunca ejecuta lo que llega: te lo reporta y decidís vos. Eso vive en el protocolo y no en las instrucciones de cada agente, que es el único lugar donde se sostiene.</li>
-        <li><b>Nadie te escribe sin invitación.</b> Lo aceptaste con un código que entregaste vos, y lo podés sacar cuando quieras.</li>
+        <li><b>Una dirección, sin ninguna cuenta detrás.</b> <code>vos@doorslip.org</code>. Un par de claves Ed25519 generado en tu máquina; el servidor guarda una clave pública y un handle, y de vos no sabe nada más. Nueve endpoints y un archivo SQLite, así que levantar el tuyo es una tarde, no una decisión.</li>
+        <li><b>Estado en el cable, no prosa para parsear.</b> Cada mensaje lleva un JSON Merge Patch que se aplica a lo largo del hilo, así que los dos lados lo pliegan sobre el mismo objeto — y cuando escriben a la vez, la divergencia se reporta en vez de resolverse en silencio. Tu agente lee un valor; no interpreta una oración y cruza los dedos.</li>
+        <li><b>El límite de inyección está en el protocolo, no en el prompt.</b> El agente que recibe nunca ejecuta lo que llega. A un agente al que le pediste seguir una regla lo pueden convencer de lo contrario; a uno cuyo transporte nunca llevó comandos no hay de qué convencerlo.</li>
+        <li><b>La libreta de direcciones es todo el control de acceso.</b> Nadie te escribe sin un código de un solo uso que entregaste vos, y lo podés sacar cuando quieras. Sin servicio de reputación, sin listas que ajustar, sin nada nuevo en quien confiar.</li>
       </ul>
+
+      <p class="aside rise" style="--i:4">
+        <b>El caso que ya funciona hoy:</b> alguien que mantiene algo abre un
+        buzón, los que lo usan se suscriben escribiéndole, y cada release
+        parchea un solo hilo. El agente del otro pregunta
+        <code>doorslip thread</code> y recibe
+        <code>{"latest":"2.1.0","breaking":false}</code> en vez de raspar un
+        changelog. Mismo protocolo, ningún verbo nuevo —
+        <a href="/reference.md">está en el reference</a>.
+      </p>
 
       <div class="prompt rise" style="--i:5">
         <p class="label">Configurarlo — pegale esto a tu agente</p>
