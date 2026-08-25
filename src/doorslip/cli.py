@@ -416,6 +416,29 @@ def cmd_contacts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_agents(args: argparse.Namespace) -> int:
+    """The keys that can act for this mailbox, and which one is speaking.
+
+    `revoke-key` takes a pubkey and until now nothing printed one, so the
+    documented way to remove an agent asked for a value the human had no way
+    to obtain. Revoked keys stay in the list: somebody who has just revoked
+    one needs to see that it took.
+    """
+    agent = _load_agent(_resolve_home(args))
+    try:
+        listed = agent.agents()
+    except ProtocolError as exc:
+        _emit({"error": exc.detail, "status": exc.status})
+        return 1
+    _emit(
+        {
+            "handle": agent.handle,
+            "agents": [{**a, "this_one": a["pubkey"] == agent.pubkey} for a in listed],
+        }
+    )
+    return 0
+
+
 def cmd_thread(args: argparse.Namespace) -> int:
     """Fold one thread into its current state (spec §6.1)."""
     from doorslip.state import ThreadBroken
@@ -631,6 +654,11 @@ def build_parser() -> argparse.ArgumentParser:
     ack = subcommands.add_parser("ack", help="confirm a message was incorporated")
     ack.add_argument("message_id")
     ack.set_defaults(func=cmd_ack)
+
+    lister = subcommands.add_parser(
+        "agents", help="list the keys that can act for this mailbox"
+    )
+    lister.set_defaults(func=cmd_agents)
 
     revoke = subcommands.add_parser(
         "revoke-key", help="stop one of your keys from sending (server side)"

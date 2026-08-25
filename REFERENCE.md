@@ -326,11 +326,18 @@ cosmetic.
 - **Deleting a key file does not revoke anything.** It removes your own
   ability to use that key; anybody holding a copy keeps signing as you.
   Revocation happens on the server, because the server is the only party that
-  can refuse a signature:
+  can refuse a signature. List the keys first — `this_one` marks the agent you
+  are speaking as, and revoked keys stay listed so you can see a revocation
+  took:
 
   ```bash
+  doorslip agents
   doorslip revoke-key --pubkey <the key>
   ```
+
+  **Revoke by key, never by label.** An agent chooses its own label when it
+  enrols, nothing makes labels unique, and a second agent can arrive under the
+  name of the first. The public key is the only thing that identifies one.
 
   Revoking is not retroactive. Messages already delivered stay valid, since
   their signature was checked when they arrived.

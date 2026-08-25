@@ -460,6 +460,33 @@ class Store:
             )
         self.log("welcome_key_attached", pubkey=pubkey, human_id=human_id)
 
+    def list_agents(self, human_id: str) -> list[dict[str, Any]]:
+        """Every key of this identity, revoked ones included.
+
+        Revoking needs a pubkey and until now nothing would tell an owner what
+        theirs were: the enrolment notice named a label the new agent chose for
+        itself, which is not something to revoke by. Labels are also not
+        unique, so a second agent could enrol as the same word as the first and
+        leave the owner unable to say which one to remove.
+
+        The revoked stay listed. An owner who has just revoked a key needs to
+        see that it took, and a key vanishing from the list looks the same as
+        one that was never there.
+        """
+        return [
+            {
+                "pubkey": row[0],
+                "label": row[1],
+                "created_at": row[2],
+                "revoked": row[3] is not None,
+            }
+            for row in self._db.execute(
+                "SELECT pubkey, label, created_at, revoked_at FROM agent"
+                " WHERE human_id = ? ORDER BY created_at",
+                (human_id,),
+            ).fetchall()
+        ]
+
     def active_agent_labels(self, human_id: str) -> list[str]:
         return [
             row[0]

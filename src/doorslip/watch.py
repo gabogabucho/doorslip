@@ -162,42 +162,85 @@ def run_hook(command: str, summary: dict[str, Any]) -> dict[str, Any]:
         return {"event": "hook", "error": str(exc)}
 
 
+NOTIFY_LIMIT = 120
+
+# The AppleScript is a constant with a `run` handler, and the text arrives as
+# arguments. Building the statement with the text inside it — which is what
+# this used to do — let a sender whose topic contained a quotation mark close
+# the string and continue in AppleScript, on the machine of anyone running the
+# watcher. There is no escaping scheme here to get subtly wrong: the script
+# never varies.
+_OSASCRIPT = [
+    "osascript",
+    "-e", "on run argv",
+    "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+    "-e", "end run",
+]
+
+# Same rule on Windows. The script is fixed and the text travels in the
+# environment, where PowerShell reads it as a value and never as source.
+_POWERSHELL = (
+    "[reflection.assembly]::loadwithpartialname('System.Windows.Forms')"
+    "|Out-Null;$n=New-Object System.Windows.Forms.NotifyIcon;"
+    "$n.Icon=[System.Drawing.SystemIcons]::Information;$n.Visible=$true;"
+    "$n.ShowBalloonTip(8000,$env:DOORSLIP_NOTIFY_TITLE,$env:DOORSLIP_NOTIFY_BODY,"
+    "[System.Windows.Forms.ToolTipIcon]::Info);Start-Sleep -s 6"
+)
+
+
+def plain(text: str, limit: int = NOTIFY_LIMIT) -> str:
+    """Reduce remote text to something inert before it leaves this process.
+
+    Not the defence — passing text as data rather than as source is the
+    defence, and it holds without this. This is the second layer, for the
+    parts of a notification stack we do not control: newlines that split a
+    record, terminal escapes that repaint a line, markup some daemons render,
+    and lengths that turn one message into a wall.
+    """
+    cleaned = "".join(" " if ord(c) < 32 or ord(c) == 127 else c for c in str(text))
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:limit].rstrip() + "…" if len(cleaned) > limit else cleaned
+
+
 def notify(summary: dict[str, Any]) -> None:
     """Best-effort desktop notification. Never fatal if unavailable.
 
     A watcher that dies because a notification daemon is missing is worse than
-    one that quietly keeps watching.
+    one that quietly keeps watching — and after this carried remote text into
+    a shell, one that dies on a hostile message would be worse still.
     """
-    sender = summary.get("from") or "someone"
-    topic = summary.get("topic")
+    sender = plain(summary.get("from") or "someone", 64)
+    topic = plain(summary.get("topic") or "")
     title = "New Doorslip slip"
     body = f"from {sender}" + (f" — {topic}" if topic else "")
 
     try:
         if sys.platform == "darwin":
             subprocess.run(
-                ["osascript", "-e", f'display notification "{body}" with title "{title}"'],
+                [*_OSASCRIPT, body, title],
                 check=False,
                 capture_output=True,
                 timeout=10,
             )
         elif sys.platform.startswith("linux"):
+            # `--` so a body starting with a dash is text and not an option.
             subprocess.run(
-                ["notify-send", title, body], check=False, capture_output=True, timeout=10
+                ["notify-send", "--", title, body],
+                check=False,
+                capture_output=True,
+                timeout=10,
             )
         elif sys.platform == "win32":
-            script = (
-                "[reflection.assembly]::loadwithpartialname('System.Windows.Forms')"
-                "|Out-Null;$n=New-Object System.Windows.Forms.NotifyIcon;"
-                "$n.Icon=[System.Drawing.SystemIcons]::Information;$n.Visible=$true;"
-                f"$n.ShowBalloonTip(8000,'{title}','{body}',"
-                "[System.Windows.Forms.ToolTipIcon]::Info);Start-Sleep -s 6"
-            )
             subprocess.run(
-                ["powershell", "-NoProfile", "-Command", script],
+                ["powershell", "-NoProfile", "-Command", _POWERSHELL],
                 check=False,
                 capture_output=True,
                 timeout=20,
+                env={
+                    **os.environ,
+                    "DOORSLIP_NOTIFY_TITLE": title,
+                    "DOORSLIP_NOTIFY_BODY": body,
+                },
             )
     except Exception:
         # Notification is a convenience. Losing it must not stop the watch.

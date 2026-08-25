@@ -349,6 +349,13 @@ def create_app(
                     {"handle": c.handle, "disclosure": c.disclosure}
                     for c in store.list_contacts(caller.id)
                 ],
+                # The client has read this field since revocation was added
+                # and the server never sent it, so `doorslip agents` returned
+                # an empty list and the documented way to revoke an enrolled
+                # key had no way to name one. Only the owner's own keys: this
+                # endpoint is authenticated, and a caller sees their identity
+                # and nobody else's.
+                "agents": store.list_agents(caller.id),
             }
         )
 
