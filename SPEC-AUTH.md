@@ -50,32 +50,58 @@ The HTTP method as sent, uppercase ASCII. `GET`, `POST`.
 
 ### `TARGET`
 
-The request target in **origin-form** (RFC 9112 §3.2.1): the path, and the
-query string with its `?` when one is present. No scheme, no authority, no
-fragment.
+The request target in **origin-form** (RFC 9112 §3.2.1): path, plus the query
+string introduced by `?` when the query is non-empty. No scheme, no authority,
+no fragment.
 
-Signed as the exact ASCII octets the client puts in the request line. In
-particular:
+Both sides **derive** it the same way, from the same two components:
 
-- percent-escape case is preserved — `%2F` and `%2f` are different targets;
-- query parameters keep their order and their repetitions — `?a=1&a=2` is not
-  `?a=2&a=1`, and neither collapses;
-- an empty query is preserved — `/inbox?` is not `/inbox`;
-- nothing is normalised: no dot-segment removal, no re-encoding, no sorting.
+```
+TARGET = path-octets + ("?" + query-octets  if query-octets else "")
+```
 
-A target containing CR, LF, or any octet outside `0x21`–`0x7E` is **rejected**,
-by both sides, rather than normalised. Normalising is how two implementations
-end up signing different bytes for the same request.
+- **Server (ASGI):** `scope["raw_path"]` and `scope["query_string"]`. Never
+  `scope["path"]`, which is percent-decoded: `/x/%2F` arrives there as `/x//`,
+  and two different targets become one.
+- **Client:** the same derivation over the components the HTTP library
+  prepared. Not a URL string assembled separately — those differ.
 
-**Client:** sign the prepared request target after the HTTP library has built
-it, never a URL string you assembled separately. Those differ.
+What the derivation preserves, and every implementation must:
 
-**Server (ASGI):** build the target from `scope["raw_path"]` and
-`scope["query_string"]`, never from a parsed or re-encoded URL object. Append
-`"?"` and the query string when `query_string` is present, and — because ASGI
-does not distinguish them — when the raw request line carried a trailing `?`
-with an empty query. An implementation that cannot recover that distinction
-must reject `/x?` rather than treat it as `/x`.
+- percent-escape case — `%2F` and `%2f` are different targets;
+- query order and repetition — `?a=1&a=2` is neither `?a=2&a=1` nor `?a=2`;
+- nothing normalised: no dot-segment removal, no re-encoding, no sorting.
+
+A target containing CR, LF, or any octet outside `0x21`–`0x7E` is **rejected**
+by both sides rather than normalised. Normalising is how two implementations
+sign different bytes for the same request.
+
+#### A trailing `?` with an empty query is outside the profile
+
+`GET /x?` and `GET /x` are indistinguishable at the ASGI boundary. Measured on
+the Starlette/FastAPI stack this server runs on:
+
+```
+GET /x    raw_path=b'/x'  query_string=b''
+GET /x?   raw_path=b'/x'  query_string=b''
+```
+
+The scopes are identical, so application code cannot know which arrived. An
+earlier draft of this document required the server to reject `/x?` rather than
+treat it as `/x`, which is a property the stated interface cannot carry —
+found by Daniel Gamino before implementation, which is where a specification
+bug is cheap.
+
+So: **a conforming client never emits a trailing `?` with an empty query.** A
+server treats one as absent, because it has no choice. The exact-request-line
+property is given up for one semantically empty delimiter, and nothing is lost
+by it — `/x?` and `/x` route to the same handler, so an attacker who could
+change one into the other gains nothing.
+
+The alternative was a server extension carrying the untouched request target,
+with authentication refused when absent. That preserves the stronger property
+and makes this scheme unimplementable by an ordinary ASGI server from this
+document alone, which is the thing the document exists to avoid.
 
 ### `NONCE`
 
@@ -110,9 +136,28 @@ Unchanged in shape:
 X-Doorslip-Auth: <pubkey> "." <nonce> "." <signature>
 ```
 
-All three base64. The nonce appears in both the header and the signed bytes;
-the server must verify the signature over the frame it rebuilds from the
-request it actually received, never over the header's copy alone.
+**The three components do not share an encoding**, and calling them all
+"base64" is how a second implementation rejects a valid nonce or emits one
+this server will not take. Exactly:
+
+| component | bytes | encoding | length |
+|---|---|---|---|
+| `pubkey` | 32 | base64, standard alphabet (`+`, `/`), **padded** | 44 |
+| `nonce` | 32 | base64url, URL alphabet (`-`, `_`), **unpadded** | 43 |
+| `signature` | 64 | base64, standard alphabet (`+`, `/`), **padded** | 88 |
+
+The nonce is unpadded base64url because it is minted with
+`secrets.token_urlsafe(32)`; the keys and signatures are standard padded
+base64 because that is what the Ed25519 material is encoded with. A verifier
+should reject a component that does not match its row rather than accept both
+alphabets, since accepting both means two encodings of one nonce and a
+single-use value that can be spent twice.
+
+Since `.` is not in either alphabet, splitting on it is unambiguous.
+
+The nonce appears in both the header and the signed bytes. The server must
+verify the signature over the frame it rebuilds from the request it actually
+received, never over the header's copy of anything.
 
 ## Why no canonicalisation
 
@@ -130,65 +175,91 @@ implementations that disagree.
 
 ## Test vectors
 
-Reproducible. The private key is the 32-byte seed `00 01 02 … 1f`:
+Reproducible. The private key is the 32-byte seed `00 01 02 … 1f`; the nonce
+is the 32-byte sequence `20 21 … 3f` in unpadded base64url, so it conforms to
+the encoding table above rather than merely looking like a nonce.
 
 ```
-private (base64)  AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=
-public  (base64)  A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=
-nonce             ZXhhbXBsZS1ub25jZS0wMDAwMDAwMDAwMDAwMDAwMDAw
+private (base64)   AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=
+public  (base64)   A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=
+nonce   (b64url)   ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8
+empty-body digest  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 ```
 
-`\n` below is a single LF octet.
+Each case gives the two ASGI components, the `TARGET` they derive, and the
+signature over the frame.
 
 **1 — GET, no query, no body**
 
+The frame in full, once. Five lines separated by single LF octets, and **no
+LF after the last one** — a trailing newline is a different byte string and a
+different signature.
+
 ```
-signed     doorslip-auth-v1\nGET\n/contacts\nZXhhbXBsZS1ub25jZS0wMDAwMDAwMDAwMDAwMDAwMDAw\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-signature  pB98mWGD3MqoMwW4P2WsMbls89Hb3y9KlwG0QeoQSMIa+0ZHviQ6A2c1TU/yaVoH0QDutrhC4D+gN8k6OFecDw==
+doorslip-auth-v1
+GET
+/contacts
+ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+```
+raw_path      /contacts
+query_string  (empty)
+TARGET        /contacts
+signature     qks9hJNIFbOZvcWnlfC99EueI+/JUV5mT281ShDSh7VvjhJHQ5vA0DA20zLivU0YZfG4NiGUqImVmLpyZT1tBQ==
 ```
 
 **2 — GET with a query**
 
 ```
-target     /inbox?unacked_only=true
-signature  Kx0ksmWQj7wHJUuHddZkBg6xof+aqBBnbGroj0lkQ+fHAn4TsHk4UzWlHFv+pkpDG/xJ7f3Qj4s04MsNqsQLDw==
+raw_path      /inbox
+query_string  unacked_only=true
+TARGET        /inbox?unacked_only=true
+signature     d2TkukoqWrOyPylwUoFbbwsP7c2dwkTq2lv/hiEuCd3smCtJfpWGYynUfihTJ4VPJyVmfcRmhRK4B6DCFrjzCQ==
 ```
 
-**3 — empty query is not no query**
+**3 and 4 — percent-escape case is significant**
+
+Different signatures for targets that differ only in the case of an escape.
+Deriving from `scope["path"]` instead of `raw_path` collapses both to `/x//`
+and produces one signature for two requests.
 
 ```
-target     /inbox?
-signature  ns9V/hIv3+HDT4mwwlT13kgfhgQmW1+C8CgsbNmaZwzBumUXJWu11Hb8vryTBKimhRD5Fqnvsl3rAQxj7YavAA==
+TARGET        /x/%2F
+signature     TI5PgXU82IBApCoc9MAJKxnrYmSrBoLhbM8U7rILKHogLVgphfAGkWOkRUXCAD6iT76DuVVB9IFL6xU1tgVdAw==
+
+TARGET        /x/%2f
+signature     X9hdtQMOjPn0KFUJOgdPPj3zOE9MaSxlLs+99o3dWbsXhikcfXOlA9cov9dL0R5APOgwVwf9yvBK/ItIHRgyAQ==
 ```
 
-**4 and 5 — percent-escape case is significant**
+**5 — repeated parameters keep order and multiplicity**
 
 ```
-target     /x/%2F
-signature  +QS/gl+l8wOfOoqIiHZplK4Z7801gBXoigaTF/qF6vGNMs2gmZITMtvPp3Z42gsPtcuVIGwya5a1I6RFZZExDA==
-
-target     /x/%2f
-signature  vZO6mr7P45IS7NPqSsihUf0864N+ll2iUAiT/FT0UUVQX74S9c4Hd+LcvERD6EQQwBmt8oBoMQnujPM28SW5Bw==
+raw_path      /inbox
+query_string  a=1&a=2
+TARGET        /inbox?a=1&a=2
+signature     QtFqFko6aQxRUe7C7loSQt5mwtTV5nkGO+ToC4hgXXxXfqlcdAVFbpGLZJFlNeZeyGRurFZuzCHP6eceZ1RCDw==
 ```
 
-**6 — repeated parameters keep order and multiplicity**
+**6 — POST with a body**
 
 ```
-target     /inbox?a=1&a=2
-signature  OwFuvLcy6Z4utSeZ9zYEYGD7OVlZe9w+mlMkvZvprC9q9skHdbpfANYHu7Kvdaz6IXQdN4RXi2WEk74ZGLQSDw==
+raw_path      /revoke-key
+query_string  (empty)
+body          {"pubkey":"AAA="}
+digest        f2d72ceb4fef6a4788e44e8ea0ade51cfc7e2a76959ee4bb1b8ace725b9c61e9
+signature     qzEBBWLpOfciawQcDS/JRq8Hv/ZbSte+xxb7TgUTgdkh+Qq6Oq6NA6bJahKOuPhbW9nHwbohtyNDZiUdt53wDg==
 ```
 
-**7 — POST with a body**
+An implementation that reproduces all six agrees with this one on every edge
+that has caused a signing scheme to disagree with itself.
 
-```
-target     /revoke-key
-body       {"pubkey":"AAA="}
-digest     f2d72ceb4fef6a4788e44e8ea0ade51cfc7e2a76959ee4bb1b8ace725b9c61e9
-signature  iCGCxYYRoHIJXZeyaVvFgDUuar4jVeagYpF5jBXfvNiF63v0de+KLxljNvmEywvhMbAcwX6Gl0ytOw4pzvpbDA==
-```
-
-An implementation that reproduces all seven agrees with this one about every
-edge that has ever caused a signing scheme to disagree with itself.
+**Not a vector: the proxy hop.** Whether Caddy hands the application the same
+octets the client sent is an integration test against a running proxy, not
+something a signing vector can express. It belongs in the test suite beside
+these, and a deployment behind a proxy that rewrites request targets does not
+satisfy this specification.
 
 ## Migration
 
