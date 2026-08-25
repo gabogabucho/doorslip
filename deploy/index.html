@@ -698,7 +698,9 @@ footer { border-top: 1px solid var(--rule); padding: 3rem 0 4.5rem; }
   // Failure stays silent and the strip stays hidden. Showing "0 people"
   // because the API was restarting reads as nobody being here, which is worse
   // than showing nothing on a page whose job is the text around it.
-  fetch("/stats", { headers: { accept: "application/json" } })
+  // `no-store` because a count is only worth showing if it is the count now.
+  // A cached one is worse than none: it is wrong and it looks authoritative.
+  fetch("/stats", { cache: "no-store", headers: { accept: "application/json" } })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (counts) {
       if (!counts) return;
@@ -709,7 +711,15 @@ footer { border-top: 1px solid var(--rule); padding: 3rem 0 4.5rem; }
         slot.textContent = value.toLocaleString();
         shown++;
       });
-      if (shown) document.getElementById("counts").hidden = false;
+      if (!shown) return;
+      var strip = document.getElementById("counts");
+      strip.hidden = false;
+      // `.in` by hand, because the observer never reached this one. It watches
+      // every `.rise` at load and this element was `display:none` waiting for
+      // the fetch, and an element with no box never intersects anything. It
+      // was revealed on time and stayed at opacity zero: the right numbers,
+      // painted invisible.
+      strip.classList.add("in");
     })
     .catch(function () {});
 
