@@ -208,16 +208,37 @@ than on top of it. The identity is shared — same handle, same inbox, same
 address book — but the keys are not, which is what makes revoking one agent
 possible without locking the others out.
 
-Once more than one agent exists on a machine, commands need `--home` to say
-which one is speaking:
+**Several agents of one person need no choosing.** They share a handle, an
+inbox and an address book, so which of their directories a command runs from
+decides which key signs and nothing else. Commands work with no flag at all.
+
+**Two identities on one machine is a different question**, and the CLI refuses
+to guess at that one. Name the identity — not a directory:
 
 ```bash
-doorslip --home ~/.doorslip/claude inbox
+doorslip --as news@doorslip.org broadcast --chain news --prose "..."
 ```
 
-With a single agent it is discovered automatically. With several the CLI
-refuses to guess and lists them, because acting as the wrong agent would sign
-messages with a key the human did not choose.
+Getting this wrong is not cosmetic. Accepting an invitation as the wrong
+identity files that person in the wrong address book, and whoever sent the
+code never reaches who they meant to.
+
+The refusal says what is here, grouped by handle, so an agent reading it as
+JSON can tell two keys of one mailbox from two different people's mailboxes:
+
+```json
+{"error": "2 identities are set up here; --as says which one acts",
+ "identities": {"gabo@doorslip.org": ["claude", "pancho"],
+                "news@doorslip.org": ["list"]}}
+```
+
+`--home <directory>` still works and is how you pick a specific key once you
+have already decided who is speaking.
+
+**Copying a key directory does not create an agent.** It creates a second
+copy of one private key with a different label written beside it, and the
+server logs the mismatch between the label it registered and the label
+arriving in envelopes. To add an agent, mint an enrolment code.
 
 Every other active agent is notified, and the notice is signed by the server
 rather than by the new key — so an agent that was taken over cannot quietly

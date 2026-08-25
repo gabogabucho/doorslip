@@ -63,41 +63,99 @@ def agent_home(label: str, root: Path | None = None) -> Path:
     return (root or DOORSLIP_ROOT) / label
 
 
-def discover_home(root: Path | None = None) -> Path | None:
-    """Find the only configured agent, if there is exactly one.
+def identities(root: Path | None = None) -> dict[str, list[Path]]:
+    """Every configured directory, grouped by the handle it acts as.
 
-    Someone running a single agent should never have to think about this. With
-    several, guessing would be worse than asking: acting as the wrong agent
-    sends messages signed by a key the human did not choose.
+    The grouping is the whole point. A directory is where a key lives; a
+    handle is who is speaking, and only the second one is a decision. Reading
+    the configs to find out costs a few files and stops the caller having to
+    infer identity from a folder name.
     """
     base = root or DOORSLIP_ROOT
+    grouped: dict[str, list[Path]] = {}
     if not base.is_dir():
+        return grouped
+    for directory in sorted(base.iterdir()):
+        config = directory / CONFIG_NAME
+        if not config.is_file():
+            continue
+        try:
+            handle = json.loads(config.read_text(encoding="utf-8")).get("handle")
+        except (json.JSONDecodeError, OSError):
+            # A directory we cannot read is not an identity to offer.
+            continue
+        if handle:
+            grouped.setdefault(handle, []).append(directory)
+    return grouped
+
+
+def discover_home(root: Path | None = None) -> Path | None:
+    """The directory to act from when the choice is not a real one.
+
+    One identity is one inbox and one address book however many agents hold
+    keys to it (spec §7.3), so choosing between those directories chooses
+    which key signs and not who is speaking. Asking about that was noise: a
+    person running three of their own agents had to name one on every
+    command to settle a question with no wrong answer.
+
+    Two identities is a different question and this still refuses to guess at
+    it. Accepting an invitation as the wrong one files a stranger in the wrong
+    address book, and the person who sent it never reaches who they meant to.
+    """
+    found = identities(root)
+    if len(found) != 1:
         return None
-    candidates = sorted(d for d in base.iterdir() if (d / CONFIG_NAME).is_file())
-    if len(candidates) == 1:
-        return candidates[0]
-    return None
+    return next(iter(found.values()))[0]
 
 
 def _resolve_home(args: argparse.Namespace) -> Path:
+    """Which identity acts, and only then which directory it acts from."""
     if getattr(args, "home", None):
         return Path(args.home)
-    found = discover_home()
-    if found is not None:
-        return found
-    base = DOORSLIP_ROOT
-    configured = (
-        sorted(d.name for d in base.iterdir() if (d / CONFIG_NAME).is_file())
-        if base.is_dir()
-        else []
-    )
-    if configured:
+
+    configured = identities()
+
+    wanted = getattr(args, "as_handle", None)
+    if wanted:
+        homes = configured.get(wanted.strip().lower())
+        if homes:
+            # Any directory of that identity will do: same handle, same inbox,
+            # same address book. They differ only in which key signs.
+            return homes[0]
         raise SystemExit(
             json.dumps(
                 {
-                    "error": "several agents are set up here; say which one with --home",
-                    "agents": configured,
-                    "example": f"doorslip --home {base / configured[0]} inbox",
+                    "error": f"no identity named {wanted} is set up here",
+                    "identities": sorted(configured),
+                }
+            )
+        )
+
+    found = discover_home()
+    if found is not None:
+        return found
+
+    if configured:
+        # Grouped by handle, because the folder names were never the question.
+        # Reporting a flat list of directories left the caller — often an
+        # agent reading this as JSON — unable to tell two keys of one mailbox
+        # from two different people's mailboxes, which are opposite risks.
+        example = sorted(configured)[0]
+        raise SystemExit(
+            json.dumps(
+                {
+                    "error": (
+                        f"{len(configured)} identities are set up here; "
+                        "--as says which one acts"
+                    ),
+                    "identities": {
+                        handle: [h.name for h in homes]
+                        for handle, homes in sorted(configured.items())
+                    },
+                    "note": "directories of one identity are interchangeable; "
+                    "they share an inbox and an address book and differ only "
+                    "in which key signs",
+                    "example": f"doorslip --as {example} inbox",
                 }
             )
         )
@@ -593,10 +651,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="doorslip", description="Doorslip agent client")
     parser.add_argument(
+        "--as",
+        dest="as_handle",
+        metavar="HANDLE",
+        default=None,
+        help="which identity acts, when more than one is set up here; "
+        "not needed while every agent on this machine shares one handle",
+    )
+    parser.add_argument(
         "--home",
         default=None,
-        help="this agent's directory; defaults to ~/.doorslip/<label>, "
-        "and is discovered automatically when only one agent is set up",
+        help="one agent's directory, when it matters which key signs; "
+        "normally --as is the question and this is the answer to it",
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
