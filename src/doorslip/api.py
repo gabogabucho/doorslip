@@ -393,10 +393,18 @@ def create_app(
         if not store.is_contact(recipient.id, sender.id):
             if recipient.is_welcome:
                 pass
-            elif store.is_open_inbox(recipient.id):
+            elif store.is_open_inbox(recipient.id) and not sender.is_welcome:
                 # Writing to an open mailbox is how you subscribe to it. The
                 # pair is created below, once the message is known to be good.
                 subscribing = True
+            elif store.is_open_inbox(recipient.id):
+                # The desk is the server, not somebody who can follow a list.
+                # `announce` reaches every registered identity, and one of
+                # them holding an open mailbox had the effect of subscribing
+                # the server to a user's list: every later broadcast then
+                # wrote to the desk, which greeted it back. Deliver the
+                # notice, create nothing.
+                pass
             else:
                 return _error(403, "the recipient has not accepted you")
 

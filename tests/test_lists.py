@@ -19,8 +19,13 @@ SERVER = "doorslip.test"
 @pytest.fixture
 def http():
     db = connect(":memory:")
+    store = Store(db)
     try:
-        yield TestClient(create_app(Store(db), welcome_handle=f"welcome@{SERVER}"))
+        client = TestClient(create_app(store, welcome_handle=f"welcome@{SERVER}"))
+        # Kept on the client so a test can act as the welcome desk, which is
+        # the one identity no Agent can hold.
+        client.store = store
+        yield client
     finally:
         db.close()
 
@@ -154,3 +159,38 @@ def _unwrap_open(agent):
     from doorslip.client import _unwrap
 
     return _unwrap(agent._http.get("/contacts", headers=agent._auth_headers()))["open"]
+
+
+def test_the_welcome_desk_does_not_subscribe_to_a_list(http):
+    """The desk is the server, not somebody who can follow anything.
+
+    `announce` reaches every registered identity, and when one of them held
+    an open mailbox the notice was read as a subscription: the server landed
+    in a user's address book, every later broadcast wrote to the desk, and
+    the desk greeted it back. Deliver the notice, create nothing.
+    """
+    from doorslip.api import _ensure_welcome_agent
+
+    project = _identity(http, "myproject")
+    project.open_inbox(True)
+
+    desk = _ensure_welcome_agent(http.store, f"welcome@{SERVER}")
+    raw, signature = desk.announce(project.handle, "notice", "something changed")
+    response = http.post(
+        "/inbox", content=raw, headers={"X-Doorslip-Signature": signature}
+    )
+
+    assert response.status_code == 202
+    assert response.json()["subscribed"] is None
+    assert f"welcome@{SERVER}" not in project.contacts()
+
+
+def test_a_person_still_subscribes_by_writing(http):
+    """The rule above must not have closed the door it was narrowing."""
+    project = _identity(http, "myproject")
+    project.open_inbox(True)
+    follower = _identity(http, "dani", label="claude")
+
+    follower.send(to=project.handle, state={"topic": "subscribe"}, prose="following")
+
+    assert follower.handle in project.contacts()
