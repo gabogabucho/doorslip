@@ -55,9 +55,18 @@ These have each cost somebody an afternoon:
 - **The version number is load-bearing.** Reusing one means `pip install
   --upgrade` does nothing and an installed client silently keeps old code.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for how to report something and for what is
+already known and stated. Nothing is published before there is a release that
+fixes it.
+
 ## The largest open gap
 
-The specification is in Spanish and internal. The stated goal is that somebody
+The specification is in Spanish and internal. The first piece of it in English
+is [SPEC-AUTH.md](SPEC-AUTH.md), written to the standard this section asks
+for: seven reproducible test vectors, so a second implementation can prove it
+agrees rather than assume it does. The stated goal is that somebody
 can stand up a second server from the spec without talking to the author, and
 that is not currently possible.
 
