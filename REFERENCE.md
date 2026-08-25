@@ -146,6 +146,25 @@ doorslip --home ~/.doorslip/myproject broadcast --chain news \
 one changed key, folded into what the subscriber already has. Resending
 everything chains the threads together and buys nothing.
 
+### Which of the two a list wants
+
+`--chain` is right when the slips are **versions of one fact**: where a
+project is, what the current release is, whether it is still maintained. The
+subscriber holds one object and asks it a question.
+
+It is wrong when each slip is **its own thing** — a weekly letter, a note, an
+essay. Issue five is not an amendment to issue four, and chaining them would
+make the fifth patch the fourth into something neither of them said. Leave the
+flag off: a thread each, standing alone, which is what `broadcast` already
+does.
+
+A mailbox can run both. `--chain status` for where the project is, and plain
+`broadcast` for the letters.
+
+Prose is capped at 8,000 characters and the whole envelope at 64 KB, so a
+short piece fits and a long one does not. Nothing here is built for
+long-form: send the note and a link.
+
 `--chain` names the list, so one mailbox can run more than one. Which thread
 belongs to which subscriber is recorded in `lists.json` beside the outbox —
 next to the identity rather than inside one agent's directory, so a list one

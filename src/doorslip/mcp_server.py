@@ -279,6 +279,36 @@ def doorslip_enroll(enroll_code: str, label: str = "agent") -> dict:
 
 
 @server.tool()
+def doorslip_broadcast(prose: str, state: dict | None = None, chain: str = "") -> dict:
+    """Publish one slip to every subscriber of a list your human owns.
+
+    Only for a mailbox that exists to be followed. This writes to EVERY
+    contact at once, so ask your human before each one and show them the text
+    you intend to send. It is not a message you can take back — there are as
+    many copies as there are subscribers, in as many inboxes.
+
+    `chain` names a list and is almost always what you want. With it, each
+    subscriber keeps ONE thread for the whole list and every slip patches the
+    one before, so what they hold is a single current answer rather than a
+    pile of notices. Without it each broadcast opens a new thread.
+
+    When chaining, put only what CHANGED in `state` — `{"latest": "2.1.0"}`,
+    not the whole object. Resending everything chains the threads together
+    and buys nothing. The first slip on a list is the exception: it carries
+    the shape the rest will patch.
+
+    Returns who it reached, who was `opened` (a new thread) and who was
+    `continued`. One unreachable subscriber does not stop the others.
+    """
+    try:
+        return _agent().broadcast(
+            state=state or {}, prose=prose, chain=chain or None
+        )
+    except ProtocolError as exc:
+        return _fail(exc)
+
+
+@server.tool()
 def doorslip_contacts() -> dict:
     """List who your human has accepted. Nobody else can write to them."""
     try:
