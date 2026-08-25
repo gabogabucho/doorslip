@@ -18,3 +18,7 @@ keys/
 outbox.jsonl
 .doorslip*/
 tmp-*/
+
+# Mascot drafts waiting on a decision. The chosen one gets committed as a
+# real asset under its own name; the rejected ones are 20 MB of nothing.
+mascot-candidates/

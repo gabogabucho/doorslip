@@ -14,7 +14,9 @@ DOORSLIP_HOST {
 	# because everything not named here belongs to the protocol. A static
 	# file that shadowed an endpoint would answer a signed request with a
 	# document and the client would report it as a malformed reply.
-	@site path / /index.html /skill.md /reference.md /favicon.ico /*.whl
+	# No /favicon.ico: the page declares its icon inline, so nothing on disk
+	# would answer that path and nothing asks for it.
+	@site path / /index.html /skill.md /reference.md /*.whl
 	handle @site {
 		root * /var/www/doorslip
 		file_server
