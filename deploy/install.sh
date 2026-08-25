@@ -56,6 +56,13 @@ echo "==> creating the service account"
 # one database. Nothing else should be reachable through it.
 id -u doorslip &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin doorslip
 install -d -o doorslip -g doorslip -m 750 "$DATA_DIR"
+# The service runs as `doorslip` and needs to write the database, its WAL
+# sidecars and the welcome desk's key. Anything root touched in here - a
+# backup, a manual query, a file moved during an upgrade - can leave a root
+# owned file behind, and SQLite reports that as "attempt to write a readonly
+# database", which sounds like a permissions problem with the disk rather
+# than with one file.
+chown -R doorslip:doorslip "$DATA_DIR"
 install -d -m 755 "$APP_DIR"
 
 python3 -m venv "$APP_DIR/venv" 2>/dev/null || true
