@@ -23,7 +23,7 @@ import stat
 from pathlib import Path
 from typing import Any, Protocol
 
-from doorslip.auth import AUTH_HEADER, build_credential
+from doorslip.auth import AUTH_HEADER, AUTH_V1, build_credential
 from doorslip.crypto import KeyPair, generate_keypair
 from doorslip.envelope import build, seal
 from doorslip.state import Reconstruction, ThreadBroken, reconstruct
@@ -40,6 +40,8 @@ class HttpClient(Protocol):
 
     def get(self, url: str, **kwargs: Any) -> Any: ...
     def post(self, url: str, **kwargs: Any) -> Any: ...
+    def build_request(self, method: str, url: str, **kwargs: Any) -> Any: ...
+    def send(self, request: Any) -> Any: ...
 
 
 class ProtocolError(Exception):
@@ -136,12 +138,53 @@ class Agent:
             "skill": (self.server_info or {}).get("skill"),
         }
 
-    def _auth_headers(self) -> dict[str, str]:
-        return {
-            AUTH_HEADER: build_credential(
-                self.pubkey, self._nonce(), self._keypair.private_key
+    def _authenticated_request(
+        self, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Prepare once, sign the prepared components, and send that request.
+
+        In particular, the target does not come from ``path``: it comes back
+        from the HTTP library after it has encoded the URL and parameters.  The
+        bytes signed here are therefore the bytes the transport will send.
+        """
+        nonce = self._nonce()
+        schemes = (self.server_info or {}).get("auth")
+        if not isinstance(schemes, list) or AUTH_V1 not in schemes:
+            raise ProtocolError(
+                426,
+                f"server does not advertise required authentication scheme {AUTH_V1}",
             )
-        }
+
+        request = self._http.build_request(method, path, **kwargs)
+        raw_target = request.url.raw_path
+        query_string = request.url.query
+        if query_string:
+            suffix = b"?" + query_string
+            if not raw_target.endswith(suffix):
+                raise ProtocolError(400, "HTTP client exposed inconsistent target components")
+            raw_path = raw_target[: -len(suffix)]
+        else:
+            raw_path = raw_target
+
+        try:
+            body = request.content
+        except Exception as exc:
+            raise ProtocolError(400, "authenticated request body is not buffered") from exc
+        if not isinstance(body, bytes):
+            raise ProtocolError(400, "authenticated request body must be bytes")
+
+        request.headers[AUTH_HEADER] = build_credential(
+            self.pubkey,
+            nonce,
+            self._keypair.private_key,
+            method=request.method,
+            raw_path=raw_path,
+            query_string=query_string,
+            body=body,
+        )
+        # One send, with no legacy retry after any response.  A fallback here
+        # would turn a rejection into a downgrade oracle.
+        return _unwrap(self._http.send(request))
 
     def _signed_post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Serialize ONCE, sign those bytes, send those bytes.
@@ -196,10 +239,8 @@ class Agent:
         The scope is fixed here, when you decide to add the agent. The joining
         agent never asks for one.
         """
-        return _unwrap(
-            self._http.post(
-                "/enroll-code", json={"scope": scope}, headers=self._auth_headers()
-            )
+        return self._authenticated_request(
+            "POST", "/enroll-code", json={"scope": scope}
         )["code"]
 
     def revoke(self, pubkey: str) -> dict[str, Any]:
@@ -213,27 +254,23 @@ class Agent:
         Not retroactive. Messages already delivered stay valid, their
         signatures having been checked when they arrived (spec §7.6).
         """
-        return _unwrap(
-            self._http.post(
-                "/revoke-key", json={"pubkey": pubkey}, headers=self._auth_headers()
-            )
+        return self._authenticated_request(
+            "POST", "/revoke-key", json={"pubkey": pubkey}
         )
 
     def agents(self) -> list[dict[str, Any]]:
         """The keys registered to this identity, so one can be named to revoke."""
-        payload = _unwrap(self._http.get("/contacts", headers=self._auth_headers()))
+        payload = self._authenticated_request("GET", "/contacts")
         return payload.get("agents", [])
 
     # -- address book -----------------------------------------------------
 
     def invite(self) -> str:
-        return _unwrap(self._http.post("/invite", headers=self._auth_headers()))["code"]
+        return self._authenticated_request("POST", "/invite")["code"]
 
     def accept(self, code: str) -> str:
-        return _unwrap(
-            self._http.post(
-                "/accept", json={"code": code}, headers=self._auth_headers()
-            )
+        return self._authenticated_request(
+            "POST", "/accept", json={"code": code}
         )["contact"]
 
     def open_inbox(self, open_to_strangers: bool) -> dict[str, Any]:
@@ -244,12 +281,8 @@ class Agent:
         is no cost attached to writing to a stranger yet (spec §11 ter) to
         make that survivable.
         """
-        return _unwrap(
-            self._http.post(
-                "/contacts",
-                json={"open": open_to_strangers},
-                headers=self._auth_headers(),
-            )
+        return self._authenticated_request(
+            "POST", "/contacts", json={"open": open_to_strangers}
         )
 
     def remove_contact(self, handle: str) -> dict[str, Any]:
@@ -258,10 +291,8 @@ class Agent:
         They keep you in their book: you can decide who reaches you, not who
         remembers you.
         """
-        return _unwrap(
-            self._http.post(
-                "/contacts", json={"remove": handle}, headers=self._auth_headers()
-            )
+        return self._authenticated_request(
+            "POST", "/contacts", json={"remove": handle}
         )
 
     def broadcast(
@@ -416,7 +447,7 @@ class Agent:
         )
 
     def contacts(self) -> list[str]:
-        payload = _unwrap(self._http.get("/contacts", headers=self._auth_headers()))
+        payload = self._authenticated_request("GET", "/contacts")
         return [contact["handle"] for contact in payload["contacts"]]
 
     # -- mailbox ----------------------------------------------------------
@@ -505,12 +536,8 @@ class Agent:
         return [p for p in candidates if p.exists()]
 
     def inbox(self, *, unacked_only: bool = False) -> list[dict[str, Any]]:
-        payload = _unwrap(
-            self._http.get(
-                "/inbox",
-                params={"unacked_only": unacked_only},
-                headers=self._auth_headers(),
-            )
+        payload = self._authenticated_request(
+            "GET", "/inbox", params={"unacked_only": unacked_only}
         )
         return payload["messages"]
 
@@ -522,11 +549,7 @@ class Agent:
         answer" from "nobody is listening over there", and those two call for
         opposite behaviour.
         """
-        payload = _unwrap(
-            self._http.get(
-                "/inbox", params={"sent": True}, headers=self._auth_headers()
-            )
-        )
+        payload = self._authenticated_request("GET", "/inbox", params={"sent": True})
         return payload["sent"]
 
     def unanswered(self, older_than_minutes: int = 0) -> list[dict[str, Any]]:
@@ -553,11 +576,7 @@ class Agent:
         return pending
 
     def ack(self, message_id: str) -> None:
-        _unwrap(
-            self._http.post(
-                "/ack", json={"message_id": message_id}, headers=self._auth_headers()
-            )
-        )
+        self._authenticated_request("POST", "/ack", json={"message_id": message_id})
 
     def thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
         """The whole conversation, in the order the parent chain defines.

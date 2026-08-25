@@ -156,9 +156,7 @@ def test_the_address_book_reports_whether_it_is_open(http):
 
 
 def _unwrap_open(agent):
-    from doorslip.client import _unwrap
-
-    return _unwrap(agent._http.get("/contacts", headers=agent._auth_headers()))["open"]
+    return agent._authenticated_request("GET", "/contacts")["open"]
 
 
 def test_the_welcome_desk_does_not_subscribe_to_a_list(http):

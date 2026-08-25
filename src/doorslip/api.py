@@ -1,10 +1,11 @@
 """HTTP surface for Doorslip (spec §7).
 
 One rule dominates every handler that deals with a signature: the body is read
-as **raw bytes** with `await request.body()` and verified as such. Never a
-parsed Pydantic model, never `json.loads` output re-serialized. The moment a
-handler verifies against anything but the bytes that arrived, signatures start
-failing between implementations for reasons nobody can see.
+as **raw bytes** and verified as such. Authenticated requests are streamed
+through a bounded reader, then those exact bytes are cached for the handler.
+Never a parsed Pydantic model, never `json.loads` output re-serialized. The
+moment a handler verifies against anything but the bytes that arrived,
+signatures start failing between implementations for reasons nobody can see.
 
 That is why request bodies here are not declared as Pydantic models even though
 FastAPI would happily do it: declaring one invites the next person to verify
@@ -17,25 +18,35 @@ import json
 import os
 import re
 import stat
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from doorslip.auth import AUTH_HEADER, parse_credential, signature_holds
+from doorslip.auth import (
+    ACCEPTED_AUTH_SCHEMES,
+    AUTH_HEADER,
+    AUTH_NONCE_ONLY,
+    AUTH_V1,
+    LEGACY_AUTH_REMOVAL_RELEASE,
+    build_auth_frame,
+    nonce_only_signature_holds,
+    parse_credential,
+    v1_signature_holds,
+)
 from doorslip.crypto import KeyPair, generate_keypair, verify
 from doorslip.envelope import VERSION as ENVELOPE_VERSION
 from doorslip.envelope import EnvelopeError, parse
 from doorslip.identity import Rejection, VerifiedSender, verify_sender
 from doorslip.store import (
     ENROLL_PREFIX,
-    SCOPE_FULL,
-    SCOPES,
-    MAX_MESSAGES_PER_HOUR,
     INVITE_PREFIX,
     MAX_AGENTS_PER_HUMAN,
+    MAX_MESSAGES_PER_HOUR,
+    SCOPE_FULL,
+    SCOPES,
     HandleTaken,
     Human,
     InviteInvalid,
@@ -79,6 +90,29 @@ def normalise_handle(handle: str, server_domain: str) -> str:
 
 SIGNATURE_HEADER = "X-Doorslip-Signature"
 DEFAULT_WELCOME_HANDLE = "welcome@doorslip.test"
+AUTHENTICATED_BODY_MAX_BYTES = 64 * 1024
+
+
+class _AuthenticatedBodyTooLarge(Exception):
+    pass
+
+
+async def _read_authenticated_body(request: Request) -> bytes:
+    """Read no more than the operational pre-authentication body limit."""
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > AUTHENTICATED_BODY_MAX_BYTES:
+            raise _AuthenticatedBodyTooLarge
+        chunks.append(chunk)
+
+    body = b"".join(chunks)
+    # Starlette's Request.body() uses this private cache. The stream has now
+    # been consumed, so preserving the exact accepted bytes here is what lets
+    # endpoint handlers call request.body() without reading or rebuilding them.
+    request._body = body
+    return body
 
 
 @dataclass(frozen=True)
@@ -123,7 +157,7 @@ def create_app(
     app.state.store = store
     app.state.welcome = welcome
 
-    def authenticate(request: Request) -> Caller | Response:
+    async def authenticate(request: Request) -> Caller | Response:
         """Spend a nonce and resolve the caller to a human and a scope (§7.1).
 
         Both halves matter. The handle says whose mailbox this is; the scope
@@ -133,7 +167,37 @@ def create_app(
         credential = parse_credential(request.headers.get(AUTH_HEADER))
         if credential is None:
             return _error(401, f"missing or malformed {AUTH_HEADER}")
-        if not signature_holds(credential):
+        try:
+            body = await _read_authenticated_body(request)
+        except _AuthenticatedBodyTooLarge:
+            return _error(
+                413,
+                "authenticated request body exceeds the 65536-byte "
+                "pre-authentication limit",
+            )
+        raw_path = request.scope.get("raw_path")
+        query_string = request.scope.get("query_string", b"")
+        if not isinstance(raw_path, bytes) or not isinstance(query_string, bytes):
+            return _error(401, "server did not receive the raw request target")
+
+        try:
+            build_auth_frame(
+                request.method, raw_path, query_string, credential.nonce, body
+            )
+        except ValueError:
+            return _error(401, "request is outside the authentication profile")
+
+        if v1_signature_holds(
+            credential,
+            method=request.method,
+            raw_path=raw_path,
+            query_string=query_string,
+            body=body,
+        ):
+            scheme = AUTH_V1
+        elif nonce_only_signature_holds(credential):
+            scheme = AUTH_NONCE_ONLY
+        else:
             return _error(401, "auth signature does not verify")
 
         record = store.find_agent(credential.pubkey)
@@ -146,6 +210,15 @@ def create_app(
 
         human = store.find_human(record.handle)
         assert human is not None  # the join in find_agent guarantees it
+        if scheme == AUTH_NONCE_ONLY:
+            # The row is operational migration evidence, not a credential log.
+            # In particular, neither nonce nor signature material belongs here.
+            store.log(
+                "auth_legacy",
+                pubkey=credential.pubkey,
+                human_id=human.id,
+                detail=AUTH_NONCE_ONLY,
+            )
         return Caller(human=human, scope=record.scope)
 
     def _owner_only(caller: Caller) -> Response | None:
@@ -280,7 +353,7 @@ def create_app(
         once an agent is compromised the damage is already total, so
         restricting who may enrol buys nothing real and adds edge cases.
         """
-        caller = authenticate(request)
+        caller = await authenticate(request)
         if isinstance(caller, Response):
             return caller
         refusal = _owner_only(caller)
@@ -314,7 +387,7 @@ def create_app(
         address book — so restricting who may revoke buys nothing real and
         adds edge cases.
         """
-        caller = authenticate(request)
+        caller = await authenticate(request)
         if isinstance(caller, Response):
             return caller
         refusal = _owner_only(caller)
@@ -337,9 +410,9 @@ def create_app(
     # -- address book -----------------------------------------------------
 
     @app.post("/invite")
-    def invite(request: Request) -> Response:
+    async def invite(request: Request) -> Response:
         """Mint an invitation code to hand to someone out of band (spec §7.4)."""
-        caller = authenticate(request)
+        caller = await authenticate(request)
         if isinstance(caller, Response):
             return caller
         refusal = _owner_only(caller)
@@ -350,7 +423,7 @@ def create_app(
     @app.post("/accept")
     async def accept(request: Request) -> Response:
         """Redeem an invitation code. Creates BOTH contact rows (spec §4)."""
-        caller = authenticate(request)
+        caller = await authenticate(request)
         if isinstance(caller, Response):
             return caller
         refusal = _owner_only(caller)
@@ -388,7 +461,7 @@ def create_app(
         Both live here rather than on new endpoints because both are edits to
         one thing — who may write to you — and the list of endpoints is closed.
         """
-        caller = authenticate(request)
+        caller = await authenticate(request)
         if isinstance(caller, Response):
             return caller
         refusal = _owner_only(caller)
@@ -417,8 +490,8 @@ def create_app(
         return _error(400, "say either 'open' or 'remove'")
 
     @app.get("/contacts")
-    def contacts(request: Request) -> Response:
-        caller = authenticate(request)
+    async def contacts(request: Request) -> Response:
+        caller = await authenticate(request)
         if isinstance(caller, Response):
             return caller
         return JSONResponse(
@@ -530,7 +603,7 @@ def create_app(
         )
 
     @app.get("/inbox")
-    def read_inbox(
+    async def read_inbox(
         request: Request, unacked_only: bool = False, sent: bool = False
     ) -> Response:
         """Read your own mailbox. No side effects — acknowledging is a POST.
@@ -543,7 +616,7 @@ def create_app(
         yet" from "their agent never saw it", and those call for opposite
         behaviour: wait, or tell your human the other side is not listening.
         """
-        caller = authenticate(request)
+        caller = await authenticate(request)
         if isinstance(caller, Response):
             return caller
 
@@ -591,7 +664,7 @@ def create_app(
         A POST and not a GET query parameter: an acknowledgement is a mutation,
         and GETs get cached, retried and fired by prefetchers on their own.
         """
-        caller = authenticate(request)
+        caller = await authenticate(request)
         if isinstance(caller, Response):
             return caller
 
@@ -658,6 +731,8 @@ def _server_info(request: Request) -> dict[str, Any]:
         "protocol": ENVELOPE_VERSION,
         "client": release,
         "skill": f"{base}/skill.md",
+        "auth": list(ACCEPTED_AUTH_SCHEMES),
+        "nonce_only_removal": LEGACY_AUTH_REMOVAL_RELEASE,
     }
 
 
