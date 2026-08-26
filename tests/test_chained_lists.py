@@ -302,3 +302,63 @@ def test_broadcasting_without_chaining_still_needs_nothing(http):
     report = project.broadcast(state={"topic": "news"}, prose="first")
 
     assert report["sent"] == [follower.handle]
+
+
+# -- two identities on one machine ---------------------------------------
+
+
+def test_sent_answers_for_this_identity_and_not_for_the_machine(http, tmp_path):
+    """Found on the live instance while releasing.
+
+    The outbox sits beside the identity so every agent of one person can read
+    back a thread another of them started. RELEASING.md then tells a
+    maintainer to run a list mailbox next to their own — and both resolve to
+    the same file, so `sent` answered `news@` with the person's private
+    messages. Threading survived it (`_tips` filters by thread), which is
+    exactly why nothing failed loudly.
+    """
+    shared = tmp_path / "outbox.jsonl"
+    listing = Agent(
+        http, handle=f"news@{SERVER}", label="list",
+        keypair=generate_keypair(), outbox_path=shared,
+    )
+    listing.register()
+    person = Agent(
+        http, handle=f"gabo@{SERVER}", label="claude",
+        keypair=generate_keypair(), outbox_path=shared,
+    )
+    person.register()
+    person.open_inbox(True)
+    listing.open_inbox(True)
+
+    listing.send(to=person.handle, state={"topic": "news"}, prose="release")
+    person.send(to=listing.handle, state={"topic": "private"}, prose="mine")
+
+    # A fresh reader of the same file, so nothing comes from memory.
+    reader = Agent(
+        http, handle=listing.handle, label="list",
+        keypair=listing._keypair, outbox_path=shared,
+    )
+
+    senders = {e["from"]["handle"] for e in reader.sent()}
+    assert senders == {f"news@{SERVER}"}
+
+
+def test_an_envelope_with_no_sender_is_still_returned(http, tmp_path):
+    """A line from a version that filed no sender cannot be proved to belong
+    to anybody else, and dropping history to be tidy costs more than showing
+    one line too many.
+    """
+    shared = tmp_path / "outbox.jsonl"
+    shared.write_text(
+        json.dumps({"message_id": "old-1", "thread_id": "t", "to": "x",
+                    "state": {}, "prose": "before senders were filed"}) + "\n",
+        encoding="utf-8",
+    )
+    agent = Agent(
+        http, handle=f"news@{SERVER}", label="list",
+        keypair=generate_keypair(), outbox_path=shared,
+    )
+    agent.register()
+
+    assert [e["message_id"] for e in agent.sent()] == ["old-1"]

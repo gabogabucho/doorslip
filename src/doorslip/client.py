@@ -581,12 +581,20 @@ class Agent:
                 outbox.write(json.dumps(envelope) + "\n")
 
     def sent(self) -> list[dict[str, Any]]:
-        """Envelopes sent from this machine, from memory and from disk.
+        """What this identity sent, from memory and from disk.
 
         Reads any outbox left in an agent's own directory as well as the
         shared one. Earlier versions filed each agent's sent messages
         separately, and a thread started before an upgrade would otherwise
         come back unreadable.
+
+        The outbox sits beside the identity so that every agent of one person
+        can read back a thread another of them started. But a machine can hold
+        two identities — RELEASING.md tells a maintainer to run a list mailbox
+        next to their own — and then that same file holds both, and `sent`
+        answered with somebody else's messages. It reads what is there and
+        returns what is ours: an envelope names its sender, so this needs no
+        bookkeeping to get right.
         """
         stored: list[dict[str, Any]] = []
         for path in self._outbox_files():
@@ -598,10 +606,25 @@ class Agent:
                         # One unreadable line must not cost the whole history.
                         continue
 
-        merged = {envelope["message_id"]: envelope for envelope in stored}
+        merged = {envelope["message_id"]: envelope for envelope in stored
+                  if self._is_ours(envelope)}
         for envelope in self._sent:
             merged.setdefault(envelope["message_id"], envelope)
         return list(merged.values())
+
+    def _is_ours(self, envelope: dict[str, Any]) -> bool:
+        """Whether we wrote this. Unattributable lines are kept.
+
+        An envelope from a version that filed no sender cannot be proved to
+        belong to somebody else either, and dropping history to be tidy costs
+        more than showing one line too many.
+        """
+        if not self.handle:
+            return True
+        sender = envelope.get("from")
+        if isinstance(sender, dict):
+            sender = sender.get("handle")
+        return sender is None or sender == self.handle
 
     def _outbox_files(self) -> list[Path]:
         if self._outbox_path is None:
