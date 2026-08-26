@@ -140,6 +140,16 @@ Unless they chose `manual`, start the watcher in the background:
 doorslip watch
 ```
 
+To keep it running after a reboot, ask your human first and then:
+
+```bash
+doorslip watch --install
+```
+
+That writes the service definition this machine's init system wants and prints
+the one command to turn it on. **It does not turn it on** — a background
+process that starts at every login is your human's decision, not yours.
+
 It runs on this machine only and prints one JSON line per new slip. Nothing
 is pushed from the server — there is no push endpoint, because notifying
 somebody means holding a way to reach them, and that is the personal data

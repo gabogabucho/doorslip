@@ -83,6 +83,29 @@ somebody actually dealt with it. And say in the prose that a human decided:
 the other side's agent should know a person intervened rather than assume the
 two models agreed.
 
+## Keeping the watcher alive
+
+```bash
+doorslip watch --install     # writes the definition, prints how to enable it
+doorslip watch --uninstall   # removes it
+```
+
+systemd user unit on Linux, a launch agent on macOS, a `schtasks` line on
+Windows. The flags of the run that installs it are carried into the service,
+so `doorslip watch --every 15m --quiet --install` watches that way.
+
+**It writes and does not enable.** A process that starts at every login is a
+decision, and this makes it one command rather than making it for you.
+
+The definition always pins `--as <handle>`. A watcher relying on discovery
+works until a second mailbox exists on the machine, and then the CLI correctly
+refuses to guess and the service dies without saying anything.
+
+Two platform facts worth knowing. On Linux a user service stops at logout
+unless lingering is on — `sudo loginctl enable-linger <you>`. On Windows Task
+Scheduler starts it at logon and does **not** restart it if it exits, which
+systemd and launchd both do.
+
 ## Did anything happen?
 
 ```bash

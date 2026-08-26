@@ -605,6 +605,37 @@ def cmd_watch(args: argparse.Namespace) -> int:
     from doorslip.watch import interval_seconds, watch
 
     home = _resolve_home(args)
+
+    if args.install or args.uninstall:
+        from doorslip import service
+
+        config_path, _ = _paths(home)
+        if not config_path.exists():
+            _emit({"error": f"not set up yet; run `doorslip setup` first ({home})"})
+            return 1
+        handle = json.loads(config_path.read_text(encoding="utf-8"))["handle"]
+
+        if args.uninstall:
+            _emit(service.uninstall(handle))
+            return 0
+
+        # Carry the flags this run was given, so the service watches the way
+        # the person asked rather than the way the default would.
+        extra: list[str] = []
+        if args.every:
+            extra += ["--every", args.every]
+        if args.quiet:
+            extra.append("--quiet")
+        if args.on_slip:
+            extra += ["--on-slip", args.on_slip]
+
+        result = service.install(handle, extra)
+        if not service.manager_available() and not result.get("error"):
+            result["warning"] = "the service manager for this platform is not "
+            "on PATH, so the command above may not work here"
+        _emit(result)
+        return 0 if not result.get("error") else 1
+
     config_path, _ = _paths(home)
     setting = args.every
     if setting is None:
@@ -846,6 +877,15 @@ def build_parser() -> argparse.ArgumentParser:
     watcher = subcommands.add_parser("watch", help="poll locally and announce new slips")
     watcher.add_argument("--every", choices=["15m", "30m", "60m"], help="overrides the stored setting")
     watcher.add_argument("--quiet", action="store_true", help="no desktop notifications")
+    watcher.add_argument(
+        "--install",
+        action="store_true",
+        help="write a service definition so this keeps watching after a "
+        "reboot, and print the one command that turns it on",
+    )
+    watcher.add_argument(
+        "--uninstall", action="store_true", help="remove that definition"
+    )
     watcher.add_argument(
         "--on-slip",
         help="shell command to run when a slip arrives; the metadata is in "
