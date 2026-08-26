@@ -228,12 +228,40 @@ def cmd_setup(args: argparse.Namespace) -> int:
             result["enrolled"] = True
             result["active_agents"] = registered.get("active_agents")
     except ProtocolError as exc:
-        if exc.status != 409:
-            _emit({"error": exc.detail, "status": exc.status})
+        # A 409 means one of two opposite things, and treating them alike is
+        # what made half the failures on the seed instance invisible.
+        #
+        # `pubkey already registered` is this key arriving twice: re-running
+        # setup, which is not an error and should leave the settings in place.
+        #
+        # `handle already registered` is somebody else holding that name.
+        # Writing the settings anyway left an agent pointing at a mailbox it
+        # does not own, holding a key the server has never seen, so every
+        # command afterwards answered `401 key is not registered` — while
+        # setup had reported success. Fail here, and keep the key: re-running
+        # with another handle reuses it rather than burning a new one.
+        taken = exc.status == 409 and "handle already registered" in exc.detail
+        if exc.status != 409 or taken:
+            _emit(
+                {
+                    "error": exc.detail,
+                    "status": exc.status,
+                    **(
+                        {
+                            "handle": args.handle,
+                            "why": "that name belongs to somebody else; "
+                            "handles are first come, first served",
+                            "do": "ask your human for another handle and run "
+                            "setup again — your key is kept and reused",
+                        }
+                        if taken
+                        else {}
+                    ),
+                }
+            )
             return 1
-        # Already registered with this key. Re-running setup is not an error.
         result["registered"] = False
-        result["note"] = "this handle or key was already registered"
+        result["note"] = "this key was already registered; settings refreshed"
 
     config_path.write_text(
         json.dumps(

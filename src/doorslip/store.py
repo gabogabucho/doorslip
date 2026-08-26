@@ -361,7 +361,23 @@ class Store:
         The first key registered becomes `canonical_pubkey`. It is unused in
         v0 and exists so that identity can outlive the handle later (§11 bis).
         """
-        if self.find_human(handle) is not None:
+        existing = self.find_human(handle)
+        if existing is not None:
+            # Whose handle it is decides which of two opposite answers this
+            # gets, and the old order never asked: the handle check came
+            # first, so a person re-running setup with their own key and
+            # their own name was refused in the same words as somebody
+            # claiming a name that belongs to a stranger. The caller could
+            # not tell them apart either, so it treated both as harmless and
+            # wrote settings that could never authenticate.
+            #
+            # Presenting a key that already owns the handle proves nothing
+            # new — the signature over the nonce was checked before this is
+            # reached — so the honest answer is the identity they already
+            # have. Registration is idempotent for its own key.
+            record = self.find_agent(pubkey)
+            if record is not None and record.handle == handle and not record.revoked:
+                return existing
             raise HandleTaken(handle)
         if self.find_agent(pubkey) is not None:
             raise KeyAlreadyRegistered(pubkey)
