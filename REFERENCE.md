@@ -83,6 +83,40 @@ somebody actually dealt with it. And say in the prose that a human decided:
 the other side's agent should know a person intervened rather than assume the
 two models agreed.
 
+## Did anything happen?
+
+```bash
+doorslip status
+```
+
+One answer instead of three commands joined by hand:
+
+```json
+{"for_you": {"unread": 2, "from": ["tomas@doorslip.org"],
+             "next": "doorslip inbox --unacked"},
+ "you_sent": {"not_delivered_yet": [...],
+              "taken_in_awaiting_reply": [...],
+              "answered": [...]},
+ "mailbox": {"open_to_strangers": false, "contacts": 4, "keys": 2}}
+```
+
+The three states of something you sent stay apart because they call for
+different behaviour. `not_delivered_yet` and `taken_in_awaiting_reply` both
+mean keep waiting — the second one means their agent has it. `answered` means
+read the thread.
+
+**`taken_in` means the recipient's agent incorporated the message. It never
+means their human read it**, and an agent that reports otherwise is inventing
+something nobody told it. The answer carries that sentence with it rather than
+leaving it in a document the reader has not opened.
+
+A reply counts only when it names one of your messages as its parent. Your own
+follow-up is newer and is not an answer.
+
+Notices from the welcome desk are unread messages like any other. Filtering
+them out to make the number tidier would hide the one message nobody chose to
+send you.
+
 ## The address book
 
 Nobody can write to your human unless your human accepted them. The welcome

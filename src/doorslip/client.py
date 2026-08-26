@@ -446,6 +446,78 @@ class Agent:
             json.dumps(book, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
 
+    def status(self) -> dict[str, Any]:
+        """One answer to "did anything happen?".
+
+        The pieces were all here — `inbox`, `sent`, `contacts` — and somebody
+        had to run three commands and hold the result in their head to learn
+        whether a message they sent had landed. Feedback from a first user was
+        that receipt, reply and subscription were the three things they could
+        not see, and each of them was a join away rather than missing.
+
+        The three states a sent slip can be in are kept apart because they
+        call for different behaviour. Not taken in yet says wait. Taken in
+        with no reply says they have it and are thinking, so waiting is still
+        right. Answered says read the thread. Collapsing them into "sent"
+        loses the only distinction that tells an agent what to do next.
+
+        `taken_in` means the recipient's AGENT incorporated the message. It
+        never means their human read it, and the wording here says so, because
+        an agent that reports "they read it" is inventing something nobody
+        told it.
+        """
+        arrived = self.inbox()
+        delivered = self.delivery()
+
+        # A reply is a message we received whose parent is one of ours. That
+        # is exact, where "something newer in the thread" would count our own
+        # follow-ups and another agent of theirs talking to itself.
+        ours = {m["message_id"] for m in delivered}
+        answered = {
+            m["parent_message_id"]
+            for m in arrived
+            if m.get("parent_message_id") in ours
+        }
+
+        waiting, thinking, replied = [], [], []
+        for m in delivered:
+            entry = {
+                "to": m["to"],
+                "topic": m.get("topic"),
+                "thread_id": m["thread_id"],
+                "sent_at": m.get("sent_at"),
+            }
+            if m["message_id"] in answered:
+                replied.append(entry)
+            elif m.get("acked"):
+                thinking.append(entry)
+            else:
+                waiting.append(entry)
+
+        unread = [m for m in arrived if not m.get("acked")]
+        book = self._authenticated_request("GET", "/contacts")
+
+        return {
+            "handle": self.handle,
+            "for_you": {
+                "unread": len(unread),
+                "from": sorted({m["from"] for m in unread}),
+                "next": "doorslip inbox --unacked" if unread else None,
+            },
+            "you_sent": {
+                "not_delivered_yet": waiting,
+                "taken_in_awaiting_reply": thinking,
+                "answered": replied,
+            },
+            "mailbox": {
+                "open_to_strangers": book.get("open", False),
+                "contacts": len(book.get("contacts", [])),
+                "keys": len(book.get("agents", [])),
+            },
+            "what_taken_in_means": "the recipient's agent incorporated the "
+            "message, never that their human read it",
+        }
+
     def contacts(self) -> list[str]:
         payload = self._authenticated_request("GET", "/contacts")
         return [contact["handle"] for contact in payload["contacts"]]

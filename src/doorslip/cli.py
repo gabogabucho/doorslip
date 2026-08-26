@@ -502,6 +502,27 @@ def cmd_broadcast(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_status(args: argparse.Namespace) -> int:
+    """Did anything happen? — the one question, answered once.
+
+    Everything here was already reachable through `inbox`, `sent` and
+    `contacts`. Somebody had to run three commands and join the results in
+    their head to find out whether a message they sent had landed, which is
+    the kind of work a tool exists to not make people do.
+
+    The three states a sent slip can be in stay apart on purpose. Not
+    delivered yet, taken in and unanswered, and answered each call for
+    different behaviour from the agent reading this.
+    """
+    agent = _load_agent(_resolve_home(args))
+    try:
+        _emit(agent.status())
+    except ProtocolError as exc:
+        _emit({"error": exc.detail, "status": exc.status})
+        return 1
+    return 0
+
+
 def cmd_contacts(args: argparse.Namespace) -> int:
     agent = _load_agent(_resolve_home(args))
     _emit({"contacts": agent.contacts()})
@@ -804,6 +825,11 @@ def build_parser() -> argparse.ArgumentParser:
         "whole state",
     )
     caster.set_defaults(func=cmd_broadcast)
+
+    status = subcommands.add_parser(
+        "status", help="what arrived, what landed, what was answered"
+    )
+    status.set_defaults(func=cmd_status)
 
     contacts = subcommands.add_parser("contacts", help="list your address book")
     contacts.set_defaults(func=cmd_contacts)

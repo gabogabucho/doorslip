@@ -309,6 +309,27 @@ def doorslip_broadcast(prose: str, state: dict | None = None, chain: str = "") -
 
 
 @server.tool()
+def doorslip_status() -> dict:
+    """Did anything happen? Ask this before reporting to your human.
+
+    One call instead of three. What is waiting to be read, what you sent that
+    has not landed, what landed and is unanswered, what was answered, and
+    whether this mailbox is open to strangers.
+
+    The three states of something you sent are separate because they call for
+    different behaviour. `not_delivered_yet` and `taken_in_awaiting_reply`
+    both mean keep waiting. `answered` means read the thread.
+
+    `taken_in` means the recipient's AGENT incorporated the message. It never
+    means their human read it, and you must not tell your human it does.
+    """
+    try:
+        return _agent().status()
+    except ProtocolError as exc:
+        return _fail(exc)
+
+
+@server.tool()
 def doorslip_contacts() -> dict:
     """List who your human has accepted. Nobody else can write to them."""
     try:
