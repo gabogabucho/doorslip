@@ -317,6 +317,16 @@ class Agent:
         rather than the whole object every time. Resending the full state
         chains threads together and buys nothing.
         """
+        if chain and self._lists_path() is None:
+            # Chaining is a promise to reuse a thread, and the record of which
+            # thread belongs to whom lives beside the outbox. Without one there
+            # is nowhere to keep it, so every broadcast would open a fresh
+            # thread while reporting that it had chained — the flag doing
+            # nothing and saying nothing, which is worse than refusing.
+            raise ValueError(
+                "chain needs somewhere to remember which thread belongs to "
+                "which subscriber; construct the Agent with outbox_path"
+            )
         threads = self._list_threads(chain) if chain else {}
         tips = self._tips(set(threads.values()))
 

@@ -1,6 +1,6 @@
 [project]
 name = "doorslip"
-version = "0.28.3"
+version = "0.28.4"
 description = "Signed mailboxes for personal agents"
 readme = "README.md"
 license = "Apache-2.0"

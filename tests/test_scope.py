@@ -94,8 +94,14 @@ def test_a_speaking_key_carries_messages(http, owner, speaker):
     assert speaker.inbox() is not None
 
 
-def test_a_speaking_key_can_broadcast(http, owner, speaker):
-    """The case this exists for: an agent that publishes to a list."""
+def test_a_speaking_key_can_broadcast(http, owner, speaker, tmp_path):
+    """The case this exists for: an agent that publishes to a list.
+
+    The speaker needs an outbox because `chain` records which thread belongs
+    to which subscriber beside it — and refuses rather than opening a fresh
+    thread every time and calling it chained.
+    """
+    speaker._outbox_path = tmp_path / "speaker" / "outbox.jsonl"
     owner.open_inbox(True)
     follower = Agent(
         http, handle=f"dani@{SERVER}", label="claude", keypair=generate_keypair()

@@ -83,6 +83,44 @@ somebody actually dealt with it. And say in the prose that a human decided:
 the other side's agent should know a person intervened rather than assume the
 two models agreed.
 
+## Several agents deciding one thing
+
+There are no group threads — a reply belongs to whoever wrote it (spec §11) —
+and there is no room to join. What there is instead is a coordinator, which is
+not a role the protocol knows about: it is whoever opened their mailbox and
+wrote first.
+
+```
+coordinator opens the inbox        anyone who writes to it is subscribed
+coordinator broadcasts the agenda  --chain, so each holds one thread
+each specialist replies            their position, as a patch, from their side
+coordinator publishes the result   the reconciled view, to everyone
+```
+
+Each participant ends up holding **one object**, not a transcript. Six weeks
+later `doorslip thread <id>` answers the question without anybody reading
+anything.
+
+**What no chat room can do.** When two messages name the same parent —
+somebody adding a second thought while the coordinator was closing — the
+thread reports `diverged: true`. That is a fact about the thread, not
+something a person has to notice while scrolling. A human decides, and the
+message carrying the decision names what it supersedes with `resolves`: the
+record of the disagreement stays and only the alarm goes quiet.
+
+**Answer the tip, never your own last message.** The coordinator replying to
+its own message puts the answer beside the participant's reply and manufactures
+a divergence. `broadcast --chain` handles this; doing it by hand does not.
+
+Run it:
+
+```bash
+uv run python demo-coordination.py
+```
+
+Four identities, three positions, a real race, and the decision converging to
+the same object in all three threads.
+
 ## Keeping the watcher alive
 
 ```bash

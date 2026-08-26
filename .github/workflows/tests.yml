@@ -55,6 +55,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --extra dev
       - run: uv run python demo.py
+      # The coordination pattern is the answer to "can agents
+      # debate?", and a demo nobody runs is a claim nobody checks.
+      - run: uv run python demo-coordination.py
 
   package:
     # A version on PyPI can never be replaced, so a broken description is

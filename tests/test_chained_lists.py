@@ -63,6 +63,17 @@ def _subscriber(http, tmp_path, name):
     return follower
 
 
+def _without_outbox(http, name, label="hermes"):
+    """What a library caller gets by default: no outbox, so nowhere to record
+    which thread belongs to which subscriber.
+    """
+    agent = Agent(
+        http, handle=f"{name}@{SERVER}", label=label, keypair=generate_keypair()
+    )
+    agent.register()
+    return agent
+
+
 def _threads_of(agent):
     return {envelope["thread_id"] for envelope in agent.sent()}
 
@@ -262,3 +273,32 @@ def test_one_unreachable_subscriber_does_not_stop_a_chained_list(
     report = project.broadcast(state={"topic": "news"}, prose="first", chain="news")
 
     assert report["sent"] == [f"eve@{SERVER}"]
+
+
+def test_chaining_without_somewhere_to_remember_refuses(http):
+    """Found by writing the coordination demo, where the agents had no outbox.
+
+    The flag silently opened a new thread per broadcast and reported them as
+    chained, so the demo's participants ended up holding the agenda and their
+    own reply and never the decision. A flag that does nothing and says nothing
+    is worse than one that refuses.
+    """
+    project = _without_outbox(http, "myproject")
+    project.open_inbox(True)
+
+    with pytest.raises(ValueError) as caught:
+        project.broadcast(state={"topic": "news"}, prose="first", chain="news")
+
+    assert "outbox_path" in str(caught.value)
+
+
+def test_broadcasting_without_chaining_still_needs_nothing(http):
+    """The default has no promise to keep, so it keeps working."""
+    project = _without_outbox(http, "myproject")
+    project.open_inbox(True)
+    follower = _without_outbox(http, "dani", label="claude")
+    follower.send(to=project.handle, state={"topic": "sub"}, prose="following")
+
+    report = project.broadcast(state={"topic": "news"}, prose="first")
+
+    assert report["sent"] == [follower.handle]
